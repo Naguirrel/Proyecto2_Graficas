@@ -18,12 +18,16 @@ pub fn render_background(framebuffer: &mut Framebuffer) {
     );
     let scene = sample_scene();
 
+    render_scene(framebuffer, &camera, &scene);
+}
+
+pub fn render_scene(framebuffer: &mut Framebuffer, camera: &Camera, scene: &Scene) {
     framebuffer.clear(Color::BLACK);
 
     for y in 0..framebuffer.height() {
         for x in 0..framebuffer.width() {
             let ray = camera.ray_for_pixel(x, y, framebuffer.width(), framebuffer.height());
-            let color = trace_primary_ray(&ray, &scene);
+            let color = trace_primary_ray(&ray, scene);
 
             framebuffer.set_pixel(x, y, color);
         }
@@ -192,12 +196,13 @@ pub(crate) fn background_color(direction: Vec3) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        background_color, is_light_visible, render_background, sample_scene, shade_hit,
-        trace_primary_ray,
+        background_color, is_light_visible, render_background, render_scene, sample_scene,
+        shade_hit, trace_primary_ray,
     };
     use crate::{
-        color::Color, cube::Cube, framebuffer::Framebuffer, intersection::Intersection,
-        light::PointLight, material::Material, math::Vec3, ray::Ray, scene::Scene,
+        camera::OrbitCamera, color::Color, cube::Cube, framebuffer::Framebuffer,
+        intersection::Intersection, light::PointLight, material::Material, math::Vec3, ray::Ray,
+        scene::Scene,
     };
 
     fn scene_with_main_cube() -> Scene {
@@ -723,5 +728,62 @@ mod tests {
                 .iter()
                 .all(|&pixel| pixel <= 0x00ff_ffff)
         );
+    }
+
+    #[test]
+    fn framebuffer_changes_after_orbit_rotation() {
+        let scene = sample_scene();
+        let mut first = Framebuffer::new(48, 36);
+        let mut second = Framebuffer::new(48, 36);
+        let aspect_ratio = first.width() as f32 / first.height() as f32;
+        let target = Vec3::new(0.0, -0.25, 0.0);
+        let first_camera = OrbitCamera::new(
+            target,
+            0.6,
+            0.4,
+            7.3,
+            55.0,
+            aspect_ratio,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .to_camera();
+        let second_camera = OrbitCamera::new(
+            target,
+            1.1,
+            0.4,
+            7.3,
+            55.0,
+            aspect_ratio,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .to_camera();
+
+        render_scene(&mut first, &first_camera, &scene);
+        render_scene(&mut second, &second_camera, &scene);
+
+        assert_ne!(first.pixels(), second.pixels());
+    }
+
+    #[test]
+    fn framebuffer_dimensions_survive_orbit_render() {
+        let scene = sample_scene();
+        let mut framebuffer = Framebuffer::new(48, 36);
+        let aspect_ratio = framebuffer.width() as f32 / framebuffer.height() as f32;
+        let camera = OrbitCamera::new(
+            Vec3::new(0.0, -0.25, 0.0),
+            0.9,
+            0.35,
+            7.3,
+            55.0,
+            aspect_ratio,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .to_camera();
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert_eq!(framebuffer.width(), 48);
+        assert_eq!(framebuffer.height(), 36);
+        assert_eq!(framebuffer.pixels().len(), 48 * 36);
     }
 }
