@@ -1,14 +1,31 @@
 use minifb::{Key, Window, WindowOptions};
+use std::time::Instant;
 
-use crate::{framebuffer::Framebuffer, renderer};
+use crate::{
+    camera::{CameraInput, OrbitCamera},
+    framebuffer::Framebuffer,
+    math::Vec3,
+    renderer,
+};
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
+    let aspect_ratio = WIDTH as f32 / HEIGHT as f32;
+    let mut orbit_camera = OrbitCamera::new(
+        Vec3::new(0.0, -0.25, 0.0),
+        0.60,
+        0.40,
+        7.30,
+        55.0,
+        aspect_ratio,
+        Vec3::new(0.0, 1.0, 0.0),
+    );
+    let scene = renderer::sample_scene();
     let mut window = Window::new(
-        "Diorama Raytracing - Iluminacion",
+        "Diorama Raytracing - Camara orbital",
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -18,11 +35,31 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     window.set_target_fps(60);
-    renderer::render_background(&mut framebuffer);
+    let mut camera = orbit_camera.to_camera();
+    renderer::render_scene(&mut framebuffer, &camera, &scene);
+    let mut last_frame = Instant::now();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
+        let now = Instant::now();
+        let delta_seconds = now.duration_since(last_frame).as_secs_f32();
+        last_frame = now;
+
+        if orbit_camera.update(read_camera_input(&window), delta_seconds) {
+            camera = orbit_camera.to_camera();
+            renderer::render_scene(&mut framebuffer, &camera, &scene);
+        }
+
         window.update_with_buffer(framebuffer.pixels(), WIDTH, HEIGHT)?;
     }
 
     Ok(())
+}
+
+fn read_camera_input(window: &Window) -> CameraInput {
+    CameraInput {
+        rotate_left: window.is_key_down(Key::A),
+        rotate_right: window.is_key_down(Key::D),
+        rotate_up: window.is_key_down(Key::W),
+        rotate_down: window.is_key_down(Key::S),
+    }
 }
