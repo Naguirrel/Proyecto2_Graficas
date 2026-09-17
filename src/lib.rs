@@ -1,7 +1,9 @@
 pub mod app;
 pub mod camera;
 pub mod color;
+pub mod cube;
 pub mod framebuffer;
+pub mod intersection;
 pub mod math;
 pub mod ray;
 pub mod renderer;
