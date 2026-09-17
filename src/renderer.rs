@@ -1,6 +1,6 @@
 use crate::{
     camera::Camera, color::Color, cube::Cube, framebuffer::Framebuffer, intersection::Intersection,
-    math::Vec3, ray::Ray,
+    material::Material, math::Vec3, ray::Ray, scene::Scene,
 };
 
 const HIT_T_MIN: f32 = 0.001;
@@ -15,59 +15,59 @@ pub fn render_background(framebuffer: &mut Framebuffer) {
         55.0,
         aspect_ratio,
     );
-    let cubes = [Cube::new(
-        Vec3::new(-1.0, -1.0, -1.0),
-        Vec3::new(1.0, 1.0, 1.0),
-        0,
-    )];
+    let scene = sample_scene();
 
     framebuffer.clear(Color::BLACK);
 
     for y in 0..framebuffer.height() {
         for x in 0..framebuffer.width() {
             let ray = camera.ray_for_pixel(x, y, framebuffer.width(), framebuffer.height());
-            let color = trace_primary_ray(&ray, &cubes);
+            let color = trace_primary_ray(&ray, &scene);
 
             framebuffer.set_pixel(x, y, color);
         }
     }
 }
 
-pub(crate) fn trace_primary_ray(ray: &Ray, cubes: &[Cube]) -> Color {
-    match closest_hit(ray, cubes, HIT_T_MIN, HIT_T_MAX) {
-        Some(hit) => hit_color(hit),
+pub(crate) fn sample_scene() -> Scene {
+    let mut scene = Scene::new();
+    let blue = scene.add_material(Material::diffuse(Color::new(0.28, 0.42, 0.78)));
+    let red = scene.add_material(Material::diffuse(Color::new(0.72, 0.22, 0.18)));
+
+    scene
+        .add_cube(Cube::new(
+            Vec3::new(-1.0, -1.0, -1.0),
+            Vec3::new(1.0, 1.0, 1.0),
+            blue,
+        ))
+        .expect("sample cube uses a registered material");
+    scene
+        .add_cube(Cube::new(
+            Vec3::new(1.25, -1.0, -0.4),
+            Vec3::new(1.85, -0.4, 0.2),
+            red,
+        ))
+        .expect("sample accent cube uses a registered material");
+
+    scene
+}
+
+pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
+    match scene.intersect(ray, HIT_T_MIN, HIT_T_MAX) {
+        Some(hit) => hit_color(hit, scene),
         None => background_color(ray.direction),
     }
 }
 
-pub(crate) fn closest_hit(
-    ray: &Ray,
-    cubes: &[Cube],
-    t_min: f32,
-    t_max: f32,
-) -> Option<Intersection> {
-    let mut closest = t_max;
-    let mut closest_hit = None;
-
-    for cube in cubes {
-        if let Some(hit) = cube.intersect(ray, t_min, closest) {
-            closest = hit.distance;
-            closest_hit = Some(hit);
-        }
-    }
-
-    closest_hit
-}
-
-pub(crate) fn hit_color(hit: Intersection) -> Color {
+pub(crate) fn hit_color(hit: Intersection, scene: &Scene) -> Color {
     let normal_color = Color::new(
         hit.normal.x * 0.5 + 0.5,
         hit.normal.y * 0.5 + 0.5,
         hit.normal.z * 0.5 + 0.5,
     );
-    let base = Color::new(0.28, 0.42, 0.78);
+    let material = scene.material(hit.material_id).copied().unwrap_or_default();
 
-    (base * 0.35 + normal_color * 0.65).clamped()
+    (material.albedo * 0.55 + normal_color * 0.45 + material.emission).clamped()
 }
 
 pub(crate) fn background_color(direction: Vec3) -> Color {
@@ -80,14 +80,25 @@ pub(crate) fn background_color(direction: Vec3) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::{background_color, closest_hit, hit_color, render_background, trace_primary_ray};
+    use super::{background_color, hit_color, render_background, sample_scene, trace_primary_ray};
     use crate::{
         color::Color, cube::Cube, framebuffer::Framebuffer, intersection::Intersection, math::Vec3,
-        ray::Ray,
+        ray::Ray, scene::Scene,
     };
 
-    fn main_cube() -> Cube {
-        Cube::new(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0), 0)
+    fn scene_with_main_cube() -> Scene {
+        let mut scene = Scene::new();
+        let material_id = scene.add_material(crate::material::Material::diffuse(Color::new(
+            0.28, 0.42, 0.78,
+        )));
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                material_id,
+            ))
+            .unwrap();
+        scene
     }
 
     #[test]
@@ -96,47 +107,67 @@ mod tests {
             Vec3::new(3.0, 2.0, 5.0),
             Vec3::ZERO - Vec3::new(3.0, 2.0, 5.0),
         );
+        let scene = scene_with_main_cube();
 
-        assert!(closest_hit(&camera_ray, &[main_cube()], 0.001, 100.0).is_some());
+        assert!(scene.intersect(&camera_ray, 0.001, 100.0).is_some());
     }
 
     #[test]
     fn ray_missing_cube_uses_background() {
         let ray = Ray::new(Vec3::new(3.0, 2.0, 5.0), Vec3::new(0.0, 1.0, 0.0));
+        let scene = scene_with_main_cube();
 
         assert_eq!(
-            trace_primary_ray(&ray, &[main_cube()]).to_u32(),
+            trace_primary_ray(&ray, &scene).to_u32(),
             background_color(ray.direction).to_u32()
         );
     }
 
     #[test]
-    fn closest_hit_selects_nearest_cube() {
-        let near = Cube::new(Vec3::new(-0.5, -0.5, 1.0), Vec3::new(0.5, 0.5, 2.0), 1);
-        let far = Cube::new(Vec3::new(-0.5, -0.5, -2.0), Vec3::new(0.5, 0.5, -1.0), 2);
-        let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
-        let hit = closest_hit(&ray, &[far, near], 0.001, 100.0).unwrap();
+    fn two_materials_can_produce_different_colors() {
+        let scene = sample_scene();
+        let first = Intersection::new(1.0, Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 0);
+        let second = Intersection::new(1.0, Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 1);
 
-        assert_eq!(hit.material_id, 1);
+        assert_ne!(
+            hit_color(first, &scene).to_u32(),
+            hit_color(second, &scene).to_u32()
+        );
     }
 
     #[test]
-    fn cube_order_does_not_change_closest_hit() {
-        let near = Cube::new(Vec3::new(-0.5, -0.5, 1.0), Vec3::new(0.5, 0.5, 2.0), 1);
-        let far = Cube::new(Vec3::new(-0.5, -0.5, -2.0), Vec3::new(0.5, 0.5, -1.0), 2);
+    fn scene_intersection_selects_nearest_cube_for_renderer() {
+        let mut scene = Scene::new();
+        let near_id = scene.add_material(crate::material::Material::diffuse(Color::new(
+            0.7, 0.2, 0.2,
+        )));
+        let far_id = scene.add_material(crate::material::Material::diffuse(Color::new(
+            0.2, 0.2, 0.7,
+        )));
+        let near = Cube::new(
+            Vec3::new(-0.5, -0.5, 1.0),
+            Vec3::new(0.5, 0.5, 2.0),
+            near_id,
+        );
+        let far = Cube::new(
+            Vec3::new(-0.5, -0.5, -2.0),
+            Vec3::new(0.5, 0.5, -1.0),
+            far_id,
+        );
+        scene.add_cube(far).unwrap();
+        scene.add_cube(near).unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
-        let first = closest_hit(&ray, &[far, near], 0.001, 100.0).unwrap();
-        let second = closest_hit(&ray, &[near, far], 0.001, 100.0).unwrap();
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
 
-        assert_eq!(first.material_id, second.material_id);
-        assert!((first.distance - second.distance).abs() < 0.0001);
+        assert_eq!(hit.material_id, near_id);
     }
 
     #[test]
     fn hit_color_remains_in_display_range() {
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
-        let hit = main_cube().intersect(&ray, 0.001, 100.0).unwrap();
-        let color = hit_color(hit);
+        let scene = scene_with_main_cube();
+        let hit = scene.cubes()[0].intersect(&ray, 0.001, 100.0).unwrap();
+        let color = hit_color(hit, &scene);
 
         assert!((0.0..=1.0).contains(&color.r));
         assert!((0.0..=1.0).contains(&color.g));
@@ -158,7 +189,7 @@ mod tests {
             Vec3::new(0.0, 0.0, 1.0),
         ]
         .map(|normal| Intersection::new(1.0, Vec3::ZERO, normal, 0))
-        .map(hit_color)
+        .map(|hit| hit_color(hit, &sample_scene()))
         .map(Color::to_u32);
         let cube_pixels = framebuffer
             .pixels()
