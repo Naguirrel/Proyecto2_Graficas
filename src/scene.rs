@@ -1,17 +1,19 @@
 use crate::{
     color::Color, cube::Cube, intersection::Intersection, light::PointLight, material::Material,
-    ray::Ray,
+    ray::Ray, texture::Texture,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneError {
     MissingMaterial { material_id: usize },
+    MissingTexture { texture_id: usize },
 }
 
 #[derive(Debug)]
 pub struct Scene {
     cubes: Vec<Cube>,
     materials: Vec<Material>,
+    textures: Vec<Texture>,
     lights: Vec<PointLight>,
     ambient_light: Color,
 }
@@ -21,15 +23,28 @@ impl Scene {
         Self {
             cubes: Vec::new(),
             materials: Vec::new(),
+            textures: Vec::new(),
             lights: Vec::new(),
             ambient_light: Color::new(0.08, 0.08, 0.08),
         }
     }
 
-    pub fn add_material(&mut self, material: Material) -> usize {
+    pub fn add_texture(&mut self, texture: Texture) -> usize {
+        let texture_id = self.textures.len();
+        self.textures.push(texture);
+        texture_id
+    }
+
+    pub fn add_material(&mut self, material: Material) -> Result<usize, SceneError> {
+        if let Some(texture_id) = material.texture_id {
+            if self.texture(texture_id).is_none() {
+                return Err(SceneError::MissingTexture { texture_id });
+            }
+        }
+
         let material_id = self.materials.len();
         self.materials.push(material);
-        material_id
+        Ok(material_id)
     }
 
     pub fn add_cube(&mut self, cube: Cube) -> Result<(), SceneError> {
@@ -51,12 +66,20 @@ impl Scene {
         self.materials.get(material_id)
     }
 
+    pub fn texture(&self, texture_id: usize) -> Option<&Texture> {
+        self.textures.get(texture_id)
+    }
+
     pub fn cubes(&self) -> &[Cube] {
         &self.cubes
     }
 
     pub fn materials(&self) -> &[Material] {
         &self.materials
+    }
+
+    pub fn textures(&self) -> &[Texture] {
+        &self.textures
     }
 
     pub fn lights(&self) -> &[PointLight] {
@@ -90,13 +113,23 @@ impl Scene {
 mod tests {
     use super::{Scene, SceneError};
     use crate::{
-        color::Color, cube::Cube, light::PointLight, material::Material, math::Vec3, ray::Ray,
+        color::Color,
+        cube::Cube,
+        light::PointLight,
+        material::Material,
+        math::{Vec2, Vec3},
+        ray::Ray,
+        texture::{Texture, WrapMode},
     };
 
     fn diffuse_scene() -> Scene {
         let mut scene = Scene::new();
-        scene.add_material(Material::diffuse(Color::WHITE));
+        scene.add_material(Material::diffuse(Color::WHITE)).unwrap();
         scene
+    }
+
+    fn white_texture() -> Texture {
+        Texture::new(1, 1, vec![Color::WHITE]).unwrap()
     }
 
     #[test]
@@ -105,6 +138,7 @@ mod tests {
 
         assert!(scene.cubes().is_empty());
         assert!(scene.materials().is_empty());
+        assert!(scene.textures().is_empty());
         assert!(scene.lights().is_empty());
     }
 
@@ -112,14 +146,16 @@ mod tests {
     fn adding_material_returns_correct_index() {
         let mut scene = Scene::new();
 
-        assert_eq!(scene.add_material(Material::default()), 0);
-        assert_eq!(scene.add_material(Material::default()), 1);
+        assert_eq!(scene.add_material(Material::default()), Ok(0));
+        assert_eq!(scene.add_material(Material::default()), Ok(1));
     }
 
     #[test]
     fn valid_material_lookup_succeeds() {
         let mut scene = Scene::new();
-        let material_id = scene.add_material(Material::diffuse(Color::new(0.2, 0.3, 0.4)));
+        let material_id = scene
+            .add_material(Material::diffuse(Color::new(0.2, 0.3, 0.4)))
+            .unwrap();
 
         assert_eq!(
             scene.material(material_id).unwrap().albedo,
@@ -130,6 +166,54 @@ mod tests {
     #[test]
     fn invalid_material_lookup_returns_none() {
         assert!(Scene::new().material(20).is_none());
+    }
+
+    #[test]
+    fn adding_texture_returns_correct_index() {
+        let mut scene = Scene::new();
+
+        assert_eq!(scene.add_texture(white_texture()), 0);
+        assert_eq!(scene.add_texture(white_texture()), 1);
+    }
+
+    #[test]
+    fn valid_texture_lookup_succeeds() {
+        let mut scene = Scene::new();
+        let texture_id = scene.add_texture(white_texture());
+
+        assert_eq!(scene.texture(texture_id).unwrap().width(), 1);
+        assert_eq!(scene.texture(texture_id).unwrap().height(), 1);
+    }
+
+    #[test]
+    fn invalid_texture_lookup_returns_none() {
+        assert!(Scene::new().texture(20).is_none());
+    }
+
+    #[test]
+    fn material_with_missing_texture_is_rejected() {
+        let mut scene = Scene::new();
+        let material =
+            Material::diffuse(Color::WHITE).with_texture(4, Vec2::new(1.0, 1.0), WrapMode::Repeat);
+
+        assert_eq!(
+            scene.add_material(material),
+            Err(SceneError::MissingTexture { texture_id: 4 })
+        );
+        assert!(scene.materials().is_empty());
+    }
+
+    #[test]
+    fn material_with_existing_texture_is_registered() {
+        let mut scene = Scene::new();
+        let texture_id = scene.add_texture(white_texture());
+        let material = Material::diffuse(Color::WHITE).with_texture(
+            texture_id,
+            Vec2::new(1.0, 1.0),
+            WrapMode::Repeat,
+        );
+
+        assert_eq!(scene.add_material(material), Ok(0));
     }
 
     #[test]
@@ -270,8 +354,12 @@ mod tests {
     #[test]
     fn hit_material_id_matches_cube() {
         let mut scene = Scene::new();
-        let red = scene.add_material(Material::diffuse(Color::new(1.0, 0.0, 0.0)));
-        let blue = scene.add_material(Material::diffuse(Color::new(0.0, 0.0, 1.0)));
+        let red = scene
+            .add_material(Material::diffuse(Color::new(1.0, 0.0, 0.0)))
+            .unwrap();
+        let blue = scene
+            .add_material(Material::diffuse(Color::new(0.0, 0.0, 1.0)))
+            .unwrap();
         scene
             .add_cube(Cube::new(
                 Vec3::new(-1.0, -1.0, 1.0),
@@ -292,5 +380,21 @@ mod tests {
             scene.intersect(&ray, 0.001, 100.0).unwrap().material_id,
             blue
         );
+    }
+
+    #[test]
+    fn scene_intersection_preserves_cube_uv() {
+        let mut scene = diffuse_scene();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                0,
+            ))
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.5, 0.25, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert!(hit.uv.approx_eq(Vec2::new(0.75, 0.625)));
     }
 }
