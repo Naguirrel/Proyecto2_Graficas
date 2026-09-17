@@ -1,12 +1,21 @@
 use crate::{
-    camera::Camera, color::Color, cube::Cube, framebuffer::Framebuffer, intersection::Intersection,
-    light::PointLight, material::Material, math::Vec3, ray::Ray, scene::Scene,
+    camera::Camera,
+    color::Color,
+    cube::Cube,
+    framebuffer::Framebuffer,
+    intersection::Intersection,
+    light::PointLight,
+    material::Material,
+    math::Vec3,
+    ray::Ray,
+    scene::Scene,
+    texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
 };
 
 const HIT_T_MIN: f32 = 0.001;
 const HIT_T_MAX: f32 = 1_000.0;
 const SHADOW_EPSILON: f32 = 0.001;
-const DEBUG_UV: bool = true;
+const DEMO_TEXTURE_PATH: &str = "assets/textures/demo_checker.ppm";
 
 pub fn render_background(framebuffer: &mut Framebuffer) {
     let aspect_ratio = framebuffer.width() as f32 / framebuffer.height().max(1) as f32;
@@ -23,12 +32,20 @@ pub fn render_background(framebuffer: &mut Framebuffer) {
 }
 
 pub fn render_scene(framebuffer: &mut Framebuffer, camera: &Camera, scene: &Scene) {
+    let texture = match Texture::from_ppm_file(DEMO_TEXTURE_PATH) {
+        Ok(texture) => Some(texture),
+        Err(error) => {
+            eprintln!("No se pudo cargar {DEMO_TEXTURE_PATH}: {error:?}. Usando fallback magenta.");
+            None
+        }
+    };
+
     framebuffer.clear(Color::BLACK);
 
     for y in 0..framebuffer.height() {
         for x in 0..framebuffer.width() {
             let ray = camera.ray_for_pixel(x, y, framebuffer.width(), framebuffer.height());
-            let color = trace_primary_ray(&ray, scene);
+            let color = trace_primary_ray_with_texture(&ray, scene, texture.as_ref());
 
             framebuffer.set_pixel(x, y, color);
         }
@@ -101,15 +118,25 @@ pub(crate) fn sample_scene() -> Scene {
     scene
 }
 
+#[cfg(test)]
 pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
+    trace_primary_ray_with_texture(ray, scene, None)
+}
+
+pub(crate) fn trace_primary_ray_with_texture(
+    ray: &Ray,
+    scene: &Scene,
+    texture: Option<&Texture>,
+) -> Color {
     match scene.intersect(ray, HIT_T_MIN, HIT_T_MAX) {
         Some(hit) => {
-            if DEBUG_UV {
-                return Color::new(hit.uv.u, hit.uv.v, 0.2).clamped();
-            }
-
             let material = scene.material(hit.material_id).copied().unwrap_or_default();
-            shade_hit(ray, hit, material, scene)
+            let texture_color = texture
+                .map(|texture| texture.sample(hit.uv, WrapMode::Repeat))
+                .unwrap_or(FALLBACK_TEXTURE_COLOR);
+            let surface_albedo = material.albedo * texture_color;
+
+            shade_hit_with_albedo(ray, hit, material, surface_albedo, scene)
         }
         None => background_color(ray.direction),
     }
@@ -117,8 +144,19 @@ pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
 
 /// Local Phong shading: emission + ambient + Lambert diffuse + Phong specular.
 /// Hard shadows skip only a blocked light's diffuse and specular terms.
+#[cfg(test)]
 pub(crate) fn shade_hit(ray: &Ray, hit: Intersection, material: Material, scene: &Scene) -> Color {
-    let mut color = material.emission + material.albedo * scene.ambient_light();
+    shade_hit_with_albedo(ray, hit, material, material.albedo, scene)
+}
+
+pub(crate) fn shade_hit_with_albedo(
+    ray: &Ray,
+    hit: Intersection,
+    material: Material,
+    surface_albedo: Color,
+    scene: &Scene,
+) -> Color {
+    let mut color = material.emission + surface_albedo * scene.ambient_light();
     let view_direction = (-ray.direction).normalized();
 
     for light in scene.lights() {
@@ -138,7 +176,7 @@ pub(crate) fn shade_hit(ray: &Ray, hit: Intersection, material: Material, scene:
         let attenuation = light.intensity / (1.0 + distance_squared.max(0.0001));
 
         if diffuse_factor > 0.0 {
-            let diffuse = material.albedo * light.color * (diffuse_factor * attenuation);
+            let diffuse = surface_albedo * light.color * (diffuse_factor * attenuation);
             let reflected_light = (-light_direction).reflect(hit.normal).normalized();
             let specular_factor = reflected_light
                 .dot(view_direction)
@@ -202,7 +240,7 @@ pub(crate) fn background_color(direction: Vec3) -> Color {
 mod tests {
     use super::{
         background_color, is_light_visible, render_background, render_scene, sample_scene,
-        shade_hit, trace_primary_ray,
+        shade_hit, shade_hit_with_albedo, trace_primary_ray,
     };
     use crate::{
         camera::{Camera, OrbitCamera},
@@ -496,6 +534,22 @@ mod tests {
     }
 
     #[test]
+    fn textured_albedo_still_receives_lighting() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::new(0.1, 0.1, 0.1));
+        scene.add_light(PointLight::new(Vec3::new(0.0, 0.0, 2.0), Color::WHITE, 3.0));
+        let material = Material::new(Color::WHITE, 0.0, 1.0, 0.0, 0.0, 1.0, Color::BLACK);
+        let surface_albedo = Color::new(0.25, 0.5, 0.75);
+
+        let color =
+            shade_hit_with_albedo(&view_ray(), flat_hit(), material, surface_albedo, &scene);
+
+        assert!(color.r > surface_albedo.r * scene.ambient_light().r);
+        assert!(color.g > surface_albedo.g * scene.ambient_light().g);
+        assert!(color.b > surface_albedo.b * scene.ambient_light().b);
+    }
+
+    #[test]
     fn surface_opposite_light_gets_no_diffuse_light() {
         let mut scene = Scene::new();
         scene.set_ambient_light(Color::BLACK);
@@ -731,13 +785,14 @@ mod tests {
     }
 
     #[test]
-    fn render_small_framebuffer_in_uv_mode_contains_u_and_v_variation() {
+    fn render_small_framebuffer_contains_texture_variation() {
         let mut scene = Scene::new();
         let material_id = scene.add_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::WHITE);
         scene
             .add_cube(Cube::new(
-                Vec3::new(-1.0, -1.0, -1.0),
-                Vec3::new(1.0, 1.0, 1.0),
+                Vec3::new(-2.0, -2.0, -1.0),
+                Vec3::new(2.0, 2.0, 1.0),
                 material_id,
             ))
             .unwrap();
@@ -749,29 +804,17 @@ mod tests {
             55.0,
             1.0,
         );
-        let debug_blue = Color::new(0.0, 0.0, 0.2).to_u32() & 0xff;
-        let mut min_u = u8::MAX;
-        let mut max_u = u8::MIN;
-        let mut min_v = u8::MAX;
-        let mut max_v = u8::MIN;
 
         render_scene(&mut framebuffer, &camera, &scene);
 
-        for &pixel in framebuffer.pixels() {
-            if pixel & 0xff != debug_blue {
-                continue;
-            }
+        let first = framebuffer.pixels()[8 * 64 + 8];
+        let second = framebuffer.pixels()[8 * 64 + 56];
+        let third = framebuffer.pixels()[56 * 64 + 8];
+        let fourth = framebuffer.pixels()[56 * 64 + 56];
 
-            let u = ((pixel >> 16) & 0xff) as u8;
-            let v = ((pixel >> 8) & 0xff) as u8;
-            min_u = min_u.min(u);
-            max_u = max_u.max(u);
-            min_v = min_v.min(v);
-            max_v = max_v.max(v);
-        }
-
-        assert!(max_u > min_u);
-        assert!(max_v > min_v);
+        assert_ne!(first, second);
+        assert_ne!(first, third);
+        assert_ne!(second, fourth);
     }
 
     #[test]
