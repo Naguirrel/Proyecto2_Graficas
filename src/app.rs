@@ -2,13 +2,13 @@ use minifb::{Key, Window, WindowOptions};
 
 use crate::{framebuffer::Framebuffer, renderer};
 
-const WIDTH: usize = 960;
-const HEIGHT: usize = 540;
+const WIDTH: usize = 800;
+const HEIGHT: usize = 600;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
     let mut window = Window::new(
-        "Raytracer CPU - Fundamentos",
+        "Diorama Raytracing - Fundamentos",
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -18,9 +18,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
 
     window.set_target_fps(60);
+    renderer::render_background(&mut framebuffer);
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-        renderer::render_background(&mut framebuffer);
         window.update_with_buffer(framebuffer.pixels(), WIDTH, HEIGHT)?;
     }
 
