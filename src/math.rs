@@ -1,10 +1,28 @@
 const EPSILON: f32 = 0.0001;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Vec2 {
+    pub u: f32,
+    pub v: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vec3 {
     pub x: f32,
     pub y: f32,
     pub z: f32,
+}
+
+impl Vec2 {
+    pub const ZERO: Self = Self::new(0.0, 0.0);
+
+    pub const fn new(u: f32, v: f32) -> Self {
+        Self { u, v }
+    }
+
+    pub fn approx_eq(self, rhs: Self) -> bool {
+        (self.u - rhs.u).abs() < EPSILON && (self.v - rhs.v).abs() < EPSILON
+    }
 }
 
 impl Vec3 {
@@ -130,7 +148,7 @@ impl std::ops::MulAssign<f32> for Vec3 {
 
 #[cfg(test)]
 mod tests {
-    use super::Vec3;
+    use super::{Vec2, Vec3};
 
     const TEST_EPSILON: f32 = 0.0001;
 
@@ -140,6 +158,15 @@ mod tests {
 
     fn assert_vec_near(left: Vec3, right: Vec3) {
         assert!(left.approx_eq(right), "{left:?} != {right:?}");
+    }
+
+    #[test]
+    fn vec2_preserves_u_and_v() {
+        let uv = Vec2::new(0.25, 0.75);
+
+        assert_eq!(uv.u, 0.25);
+        assert_eq!(uv.v, 0.75);
+        assert!(uv.approx_eq(Vec2::new(0.25001, 0.75001)));
     }
 
     #[test]

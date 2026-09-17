@@ -6,6 +6,7 @@ use crate::{
 const HIT_T_MIN: f32 = 0.001;
 const HIT_T_MAX: f32 = 1_000.0;
 const SHADOW_EPSILON: f32 = 0.001;
+const DEBUG_UV: bool = true;
 
 pub fn render_background(framebuffer: &mut Framebuffer) {
     let aspect_ratio = framebuffer.width() as f32 / framebuffer.height().max(1) as f32;
@@ -103,6 +104,10 @@ pub(crate) fn sample_scene() -> Scene {
 pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
     match scene.intersect(ray, HIT_T_MIN, HIT_T_MAX) {
         Some(hit) => {
+            if DEBUG_UV {
+                return Color::new(hit.uv.u, hit.uv.v, 0.2).clamped();
+            }
+
             let material = scene.material(hit.material_id).copied().unwrap_or_default();
             shade_hit(ray, hit, material, scene)
         }
@@ -200,8 +205,15 @@ mod tests {
         shade_hit, trace_primary_ray,
     };
     use crate::{
-        camera::OrbitCamera, color::Color, cube::Cube, framebuffer::Framebuffer,
-        intersection::Intersection, light::PointLight, material::Material, math::Vec3, ray::Ray,
+        camera::{Camera, OrbitCamera},
+        color::Color,
+        cube::Cube,
+        framebuffer::Framebuffer,
+        intersection::Intersection,
+        light::PointLight,
+        material::Material,
+        math::{Vec2, Vec3},
+        ray::Ray,
         scene::Scene,
     };
 
@@ -225,7 +237,13 @@ mod tests {
     }
 
     fn flat_hit() -> Intersection {
-        Intersection::new(1.0, Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 0)
+        Intersection::new(
+            1.0,
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec2::new(0.5, 0.5),
+            0,
+        )
     }
 
     fn view_ray() -> Ray {
@@ -305,7 +323,13 @@ mod tests {
                 0,
             ))
             .unwrap();
-        let hit = Intersection::new(1.0, Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0), 0);
+        let hit = Intersection::new(
+            1.0,
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec2::new(0.5, 0.5),
+            0,
+        );
         let light = PointLight::new(Vec3::new(0.0, 0.0, 3.0), Color::WHITE, 1.0);
 
         assert!(is_light_visible(&scene, &hit, &light));
@@ -322,7 +346,13 @@ mod tests {
                 0,
             ))
             .unwrap();
-        let hit = Intersection::new(1.0, Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), 0);
+        let hit = Intersection::new(
+            1.0,
+            Vec3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec2::new(0.5, 0.5),
+            0,
+        );
         let light = PointLight::new(Vec3::new(0.0, 2.0, 0.0), Color::WHITE, 1.0);
 
         assert!(is_light_visible(&scene, &hit, &light));
@@ -375,8 +405,20 @@ mod tests {
     #[test]
     fn two_materials_can_produce_different_colors() {
         let scene = sample_scene();
-        let first = Intersection::new(1.0, Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 0);
-        let second = Intersection::new(1.0, Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 1);
+        let first = Intersection::new(
+            1.0,
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec2::new(0.5, 0.5),
+            0,
+        );
+        let second = Intersection::new(
+            1.0,
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec2::new(0.5, 0.5),
+            1,
+        );
         let ray = view_ray();
 
         assert_ne!(
@@ -689,29 +731,47 @@ mod tests {
     }
 
     #[test]
-    fn render_small_framebuffer_contains_lit_and_shadowed_pixels() {
-        let mut framebuffer = Framebuffer::new(96, 72);
+    fn render_small_framebuffer_in_uv_mode_contains_u_and_v_variation() {
+        let mut scene = Scene::new();
+        let material_id = scene.add_material(Material::diffuse(Color::WHITE));
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                material_id,
+            ))
+            .unwrap();
+        let mut framebuffer = Framebuffer::new(64, 64);
+        let camera = Camera::new(
+            Vec3::new(0.0, 0.0, 4.0),
+            Vec3::ZERO,
+            Vec3::new(0.0, 1.0, 0.0),
+            55.0,
+            1.0,
+        );
+        let debug_blue = Color::new(0.0, 0.0, 0.2).to_u32() & 0xff;
+        let mut min_u = u8::MAX;
+        let mut max_u = u8::MIN;
+        let mut min_v = u8::MAX;
+        let mut max_v = u8::MIN;
 
-        render_background(&mut framebuffer);
-
-        let mut dark_pixels = 0;
-        let mut bright_pixels = 0;
+        render_scene(&mut framebuffer, &camera, &scene);
 
         for &pixel in framebuffer.pixels() {
-            let r = ((pixel >> 16) & 0xff) as u32;
-            let g = ((pixel >> 8) & 0xff) as u32;
-            let b = (pixel & 0xff) as u32;
-            let brightness = r + g + b;
-
-            if brightness < 80 {
-                dark_pixels += 1;
-            } else if brightness > 260 {
-                bright_pixels += 1;
+            if pixel & 0xff != debug_blue {
+                continue;
             }
+
+            let u = ((pixel >> 16) & 0xff) as u8;
+            let v = ((pixel >> 8) & 0xff) as u8;
+            min_u = min_u.min(u);
+            max_u = max_u.max(u);
+            min_v = min_v.min(v);
+            max_v = max_v.max(v);
         }
 
-        assert!(dark_pixels > 0);
-        assert!(bright_pixels > 0);
+        assert!(max_u > min_u);
+        assert!(max_v > min_v);
     }
 
     #[test]

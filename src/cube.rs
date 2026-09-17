@@ -1,4 +1,8 @@
-use crate::{intersection::Intersection, math::Vec3, ray::Ray};
+use crate::{
+    intersection::Intersection,
+    math::{Vec2, Vec3},
+    ray::Ray,
+};
 
 const SLAB_EPSILON: f32 = 0.0001;
 
@@ -84,12 +88,39 @@ impl Cube {
             distance,
             position,
             normal,
+            self.uv_at(position, normal),
             self.material_id,
         ))
     }
 
     fn has_finite_bounds(&self) -> bool {
         is_finite_vec3(self.min) && is_finite_vec3(self.max)
+    }
+
+    /// UV orientation by face:
+    /// +X uses u=-Z, v=+Y. -X uses u=+Z, v=+Y.
+    /// +Y uses u=+X, v=-Z. -Y uses u=+X, v=+Z.
+    /// +Z uses u=+X, v=+Y. -Z uses u=-X, v=+Y.
+    fn uv_at(&self, position: Vec3, normal: Vec3) -> Vec2 {
+        let x = normalized_coordinate(position.x, self.min.x, self.max.x);
+        let y = normalized_coordinate(position.y, self.min.y, self.max.y);
+        let z = normalized_coordinate(position.z, self.min.z, self.max.z);
+
+        if normal == Vec3::new(1.0, 0.0, 0.0) {
+            Vec2::new(1.0 - z, y)
+        } else if normal == Vec3::new(-1.0, 0.0, 0.0) {
+            Vec2::new(z, y)
+        } else if normal == Vec3::new(0.0, 1.0, 0.0) {
+            Vec2::new(x, 1.0 - z)
+        } else if normal == Vec3::new(0.0, -1.0, 0.0) {
+            Vec2::new(x, z)
+        } else if normal == Vec3::new(0.0, 0.0, 1.0) {
+            Vec2::new(x, y)
+        } else if normal == Vec3::new(0.0, 0.0, -1.0) {
+            Vec2::new(1.0 - x, y)
+        } else {
+            Vec2::ZERO
+        }
     }
 }
 
@@ -178,10 +209,23 @@ fn is_finite_vec3(vector: Vec3) -> bool {
     vector.x.is_finite() && vector.y.is_finite() && vector.z.is_finite()
 }
 
+fn normalized_coordinate(value: f32, min: f32, max: f32) -> f32 {
+    let span = max - min;
+
+    if !value.is_finite() || !min.is_finite() || !max.is_finite() || span.abs() <= SLAB_EPSILON {
+        return 0.0;
+    }
+
+    ((value - min) / span).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::Cube;
-    use crate::{math::Vec3, ray::Ray};
+    use crate::{
+        math::{Vec2, Vec3},
+        ray::Ray,
+    };
 
     const EPSILON: f32 = 0.0001;
 
@@ -195,6 +239,17 @@ mod tests {
 
     fn assert_vec_near(left: Vec3, right: Vec3) {
         assert!(left.approx_eq(right), "{left:?} != {right:?}");
+    }
+
+    fn assert_uv_near(left: Vec2, right: Vec2) {
+        assert!(left.approx_eq(right), "{left:?} != {right:?}");
+    }
+
+    fn assert_valid_uv(uv: Vec2) {
+        assert!(uv.u.is_finite());
+        assert!(uv.v.is_finite());
+        assert!((0.0..=1.0).contains(&uv.u));
+        assert!((0.0..=1.0).contains(&uv.v));
     }
 
     #[test]
@@ -287,6 +342,160 @@ mod tests {
     }
 
     #[test]
+    fn face_center_produces_center_uv() {
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = unit_cube().intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_uv_near(hit.uv, Vec2::new(0.5, 0.5));
+    }
+
+    #[test]
+    fn positive_x_face_produces_valid_uv() {
+        let ray = Ray::new(Vec3::new(3.0, 0.25, 0.5), Vec3::new(-1.0, 0.0, 0.0));
+        let hit = unit_cube().intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.normal, Vec3::new(1.0, 0.0, 0.0));
+        assert_valid_uv(hit.uv);
+        assert_uv_near(hit.uv, Vec2::new(0.25, 0.625));
+    }
+
+    #[test]
+    fn negative_x_face_produces_valid_uv() {
+        let ray = Ray::new(Vec3::new(-3.0, 0.25, 0.5), Vec3::new(1.0, 0.0, 0.0));
+        let hit = unit_cube().intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.normal, Vec3::new(-1.0, 0.0, 0.0));
+        assert_valid_uv(hit.uv);
+        assert_uv_near(hit.uv, Vec2::new(0.75, 0.625));
+    }
+
+    #[test]
+    fn positive_y_face_produces_valid_uv() {
+        let ray = Ray::new(Vec3::new(0.5, 3.0, 0.25), Vec3::new(0.0, -1.0, 0.0));
+        let hit = unit_cube().intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.normal, Vec3::new(0.0, 1.0, 0.0));
+        assert_valid_uv(hit.uv);
+        assert_uv_near(hit.uv, Vec2::new(0.75, 0.375));
+    }
+
+    #[test]
+    fn negative_y_face_produces_valid_uv() {
+        let ray = Ray::new(Vec3::new(0.5, -3.0, 0.25), Vec3::new(0.0, 1.0, 0.0));
+        let hit = unit_cube().intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.normal, Vec3::new(0.0, -1.0, 0.0));
+        assert_valid_uv(hit.uv);
+        assert_uv_near(hit.uv, Vec2::new(0.75, 0.625));
+    }
+
+    #[test]
+    fn positive_z_face_produces_valid_uv() {
+        let ray = Ray::new(Vec3::new(0.5, 0.25, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = unit_cube().intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.normal, Vec3::new(0.0, 0.0, 1.0));
+        assert_valid_uv(hit.uv);
+        assert_uv_near(hit.uv, Vec2::new(0.75, 0.625));
+    }
+
+    #[test]
+    fn negative_z_face_produces_valid_uv() {
+        let ray = Ray::new(Vec3::new(0.5, 0.25, -3.0), Vec3::new(0.0, 0.0, 1.0));
+        let hit = unit_cube().intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.normal, Vec3::new(0.0, 0.0, -1.0));
+        assert_valid_uv(hit.uv);
+        assert_uv_near(hit.uv, Vec2::new(0.25, 0.625));
+    }
+
+    #[test]
+    fn face_corners_cover_zero_and_one_uv() {
+        let lower = Ray::new(Vec3::new(-1.0, -1.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let upper = Ray::new(Vec3::new(1.0, 1.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let lower_hit = unit_cube().intersect(&lower, 0.001, 100.0).unwrap();
+        let upper_hit = unit_cube().intersect(&upper, 0.001, 100.0).unwrap();
+
+        assert_uv_near(lower_hit.uv, Vec2::new(0.0, 0.0));
+        assert_uv_near(upper_hit.uv, Vec2::new(1.0, 1.0));
+    }
+
+    #[test]
+    fn opposite_faces_keep_documented_orientation() {
+        let positive_x = unit_cube()
+            .intersect(
+                &Ray::new(Vec3::new(3.0, 0.0, 1.0), Vec3::new(-1.0, 0.0, 0.0)),
+                0.001,
+                100.0,
+            )
+            .unwrap();
+        let negative_x = unit_cube()
+            .intersect(
+                &Ray::new(Vec3::new(-3.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0)),
+                0.001,
+                100.0,
+            )
+            .unwrap();
+        let positive_z = unit_cube()
+            .intersect(
+                &Ray::new(Vec3::new(1.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0)),
+                0.001,
+                100.0,
+            )
+            .unwrap();
+        let negative_z = unit_cube()
+            .intersect(
+                &Ray::new(Vec3::new(1.0, 0.0, -3.0), Vec3::new(0.0, 0.0, 1.0)),
+                0.001,
+                100.0,
+            )
+            .unwrap();
+
+        assert_near(positive_x.uv.u, 0.0);
+        assert_near(negative_x.uv.u, 1.0);
+        assert_near(positive_z.uv.u, 1.0);
+        assert_near(negative_z.uv.u, 0.0);
+        assert_near(positive_x.uv.v, negative_x.uv.v);
+        assert_near(positive_z.uv.v, negative_z.uv.v);
+    }
+
+    #[test]
+    fn translated_cube_uses_local_uv() {
+        let cube = Cube::new(Vec3::new(2.0, 4.0, 6.0), Vec3::new(4.0, 6.0, 8.0), 0);
+        let ray = Ray::new(Vec3::new(3.0, 5.0, 10.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = cube.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_uv_near(hit.uv, Vec2::new(0.5, 0.5));
+    }
+
+    #[test]
+    fn non_uniform_cube_uses_axis_lengths_for_uv() {
+        let cube = Cube::new(Vec3::new(-2.0, -1.0, -4.0), Vec3::new(2.0, 3.0, 6.0), 0);
+        let ray = Ray::new(Vec3::new(0.0, 1.0, 8.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = cube.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_uv_near(hit.uv, Vec2::new(0.5, 0.5));
+    }
+
+    #[test]
+    fn inverted_corner_cube_keeps_local_uv() {
+        let cube = Cube::new(Vec3::new(2.0, 2.0, 2.0), Vec3::new(-2.0, -2.0, -2.0), 0);
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = cube.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_uv_near(hit.uv, Vec2::new(0.5, 0.5));
+    }
+
+    #[test]
+    fn ray_inside_cube_gets_exit_face_uv() {
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(1.0, 0.5, 0.0));
+        let hit = unit_cube().intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.normal, Vec3::new(1.0, 0.0, 0.0));
+        assert_uv_near(hit.uv, Vec2::new(0.5, 0.75));
+    }
+
+    #[test]
     fn short_t_max_discards_far_hit() {
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
 
@@ -323,6 +532,7 @@ mod tests {
         assert!(hit.normal.x.is_finite());
         assert!(hit.normal.y.is_finite());
         assert!(hit.normal.z.is_finite());
+        assert_valid_uv(hit.uv);
     }
 
     #[test]
@@ -332,6 +542,17 @@ mod tests {
 
         assert_vec_near(hit.position, Vec3::new(1.0, 1.0, 0.0));
         assert_eq!(hit.normal, Vec3::new(1.0, 0.0, 0.0));
+        assert_valid_uv(hit.uv);
+        assert_uv_near(hit.uv, Vec2::new(0.5, 1.0));
+    }
+
+    #[test]
+    fn degenerate_dimensions_do_not_produce_nan_uv() {
+        let cube = Cube::new(Vec3::new(0.0, -1.0, -1.0), Vec3::new(0.0, 1.0, 1.0), 0);
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = cube.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_valid_uv(hit.uv);
     }
 
     #[test]

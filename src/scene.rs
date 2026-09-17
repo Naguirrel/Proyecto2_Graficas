@@ -90,7 +90,12 @@ impl Scene {
 mod tests {
     use super::{Scene, SceneError};
     use crate::{
-        color::Color, cube::Cube, light::PointLight, material::Material, math::Vec3, ray::Ray,
+        color::Color,
+        cube::Cube,
+        light::PointLight,
+        material::Material,
+        math::{Vec2, Vec3},
+        ray::Ray,
     };
 
     fn diffuse_scene() -> Scene {
@@ -292,5 +297,21 @@ mod tests {
             scene.intersect(&ray, 0.001, 100.0).unwrap().material_id,
             blue
         );
+    }
+
+    #[test]
+    fn scene_intersection_preserves_cube_uv() {
+        let mut scene = diffuse_scene();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                0,
+            ))
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.5, 0.25, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert!(hit.uv.approx_eq(Vec2::new(0.75, 0.625)));
     }
 }
