@@ -5,12 +5,13 @@ use crate::{
 
 const HIT_T_MIN: f32 = 0.001;
 const HIT_T_MAX: f32 = 1_000.0;
+const SHADOW_EPSILON: f32 = 0.001;
 
 pub fn render_background(framebuffer: &mut Framebuffer) {
     let aspect_ratio = framebuffer.width() as f32 / framebuffer.height().max(1) as f32;
     let camera = Camera::new(
-        Vec3::new(3.0, 2.0, 5.0),
-        Vec3::ZERO,
+        Vec3::new(3.8, 2.6, 5.5),
+        Vec3::new(0.0, -0.25, 0.0),
         Vec3::new(0.0, 1.0, 0.0),
         55.0,
         aspect_ratio,
@@ -32,6 +33,15 @@ pub fn render_background(framebuffer: &mut Framebuffer) {
 pub(crate) fn sample_scene() -> Scene {
     let mut scene = Scene::new();
     scene.set_ambient_light(Color::new(0.07, 0.065, 0.08));
+    let floor = scene.add_material(Material::new(
+        Color::new(0.46, 0.46, 0.50),
+        0.15,
+        12.0,
+        0.0,
+        0.0,
+        1.0,
+        Color::BLACK,
+    ));
     let blue = scene.add_material(Material::new(
         Color::new(0.28, 0.42, 0.78),
         0.75,
@@ -53,6 +63,13 @@ pub(crate) fn sample_scene() -> Scene {
 
     scene
         .add_cube(Cube::new(
+            Vec3::new(-4.0, -1.15, -4.0),
+            Vec3::new(4.0, -1.05, 3.0),
+            floor,
+        ))
+        .expect("sample floor uses a registered material");
+    scene
+        .add_cube(Cube::new(
             Vec3::new(-1.0, -1.0, -1.0),
             Vec3::new(1.0, 1.0, 1.0),
             blue,
@@ -60,20 +77,20 @@ pub(crate) fn sample_scene() -> Scene {
         .expect("sample cube uses a registered material");
     scene
         .add_cube(Cube::new(
-            Vec3::new(1.25, -1.0, -0.4),
-            Vec3::new(1.85, -0.4, 0.2),
+            Vec3::new(1.15, -1.0, -0.5),
+            Vec3::new(1.75, -0.25, 0.15),
             red,
         ))
         .expect("sample accent cube uses a registered material");
     scene.add_light(PointLight::new(
-        Vec3::new(3.5, 4.5, 2.5),
+        Vec3::new(-2.7, 4.6, 2.8),
         Color::new(1.0, 0.82, 0.58),
-        18.0,
+        28.0,
     ));
     scene.add_light(PointLight::new(
-        Vec3::new(-4.0, 2.5, 3.0),
+        Vec3::new(3.5, 2.4, 4.0),
         Color::new(0.45, 0.62, 1.0),
-        4.5,
+        5.0,
     ));
 
     scene
@@ -90,7 +107,7 @@ pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
 }
 
 /// Local Phong shading: emission + ambient + Lambert diffuse + Phong specular.
-/// Shadows and secondary rays are intentionally omitted in this sprint step.
+/// Hard shadows skip only a blocked light's diffuse and specular terms.
 pub(crate) fn shade_hit(ray: &Ray, hit: Intersection, material: Material, scene: &Scene) -> Color {
     let mut color = material.emission + material.albedo * scene.ambient_light();
     let view_direction = (-ray.direction).normalized();
@@ -102,6 +119,10 @@ pub(crate) fn shade_hit(ray: &Ray, hit: Intersection, material: Material, scene:
         let diffuse_factor = hit.normal.dot(light_direction).max(0.0);
 
         if light.intensity <= 0.0 || light_direction == Vec3::ZERO {
+            continue;
+        }
+
+        if !is_light_visible(scene, &hit, light) {
             continue;
         }
 
@@ -125,6 +146,41 @@ pub(crate) fn shade_hit(ray: &Ray, hit: Intersection, material: Material, scene:
     color.clamped()
 }
 
+pub(crate) fn is_light_visible(scene: &Scene, hit: &Intersection, light: &PointLight) -> bool {
+    let light_offset = light.position - hit.position;
+    let distance_to_light = light_offset.length();
+
+    if !distance_to_light.is_finite() || distance_to_light <= SHADOW_EPSILON {
+        return true;
+    }
+
+    let light_direction = light_offset / distance_to_light;
+
+    if light_direction == Vec3::ZERO {
+        return true;
+    }
+
+    // Offset away from the surface. Use the geometric normal when the light is
+    // on the normal side; otherwise step along the light ray to avoid nudging
+    // the origin into the surface.
+    let offset_direction = if hit.normal.dot(light_direction) >= 0.0 {
+        hit.normal
+    } else {
+        light_direction
+    };
+    let shadow_origin = hit.position + offset_direction * SHADOW_EPSILON;
+    let shadow_ray = Ray::new(shadow_origin, light_direction);
+    let shadow_t_max = distance_to_light - SHADOW_EPSILON;
+
+    if shadow_t_max <= SHADOW_EPSILON || !shadow_t_max.is_finite() {
+        return true;
+    }
+
+    scene
+        .intersect(&shadow_ray, SHADOW_EPSILON, shadow_t_max)
+        .is_none()
+}
+
 pub(crate) fn background_color(direction: Vec3) -> Color {
     let t = (direction.y * 0.5 + 0.5).clamp(0.0, 1.0);
     let lower = Color::new(0.06, 0.07, 0.10);
@@ -135,7 +191,10 @@ pub(crate) fn background_color(direction: Vec3) -> Color {
 
 #[cfg(test)]
 mod tests {
-    use super::{background_color, render_background, sample_scene, shade_hit, trace_primary_ray};
+    use super::{
+        background_color, is_light_visible, render_background, sample_scene, shade_hit,
+        trace_primary_ray,
+    };
     use crate::{
         color::Color, cube::Cube, framebuffer::Framebuffer, intersection::Intersection,
         light::PointLight, material::Material, math::Vec3, ray::Ray, scene::Scene,
@@ -154,12 +213,136 @@ mod tests {
         scene
     }
 
+    fn scene_with_material(material: Material) -> Scene {
+        let mut scene = Scene::new();
+        scene.add_material(material);
+        scene
+    }
+
     fn flat_hit() -> Intersection {
         Intersection::new(1.0, Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 0)
     }
 
     fn view_ray() -> Ray {
         Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0))
+    }
+
+    fn occluder(material_id: usize) -> Cube {
+        Cube::new(
+            Vec3::new(-0.25, -0.25, 1.5),
+            Vec3::new(0.25, 0.25, 2.0),
+            material_id,
+        )
+    }
+
+    #[test]
+    fn light_is_visible_without_obstacle() {
+        let scene = scene_with_material(Material::diffuse(Color::WHITE));
+        let hit = flat_hit();
+        let light = PointLight::new(Vec3::new(0.0, 0.0, 3.0), Color::WHITE, 1.0);
+
+        assert!(is_light_visible(&scene, &hit, &light));
+    }
+
+    #[test]
+    fn cube_between_hit_and_light_blocks_light() {
+        let material = Material::diffuse(Color::WHITE);
+        let mut scene = scene_with_material(material);
+        scene.add_cube(occluder(0)).unwrap();
+        let hit = flat_hit();
+        let light = PointLight::new(Vec3::new(0.0, 0.0, 3.0), Color::WHITE, 1.0);
+
+        assert!(!is_light_visible(&scene, &hit, &light));
+    }
+
+    #[test]
+    fn cube_behind_light_does_not_cast_shadow() {
+        let material = Material::diffuse(Color::WHITE);
+        let mut scene = scene_with_material(material);
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.25, -0.25, 3.5),
+                Vec3::new(0.25, 0.25, 4.0),
+                0,
+            ))
+            .unwrap();
+        let hit = flat_hit();
+        let light = PointLight::new(Vec3::new(0.0, 0.0, 3.0), Color::WHITE, 1.0);
+
+        assert!(is_light_visible(&scene, &hit, &light));
+    }
+
+    #[test]
+    fn cube_behind_hit_does_not_cast_shadow() {
+        let material = Material::diffuse(Color::WHITE);
+        let mut scene = scene_with_material(material);
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.25, -0.25, -2.0),
+                Vec3::new(0.25, 0.25, -1.5),
+                0,
+            ))
+            .unwrap();
+        let hit = flat_hit();
+        let light = PointLight::new(Vec3::new(0.0, 0.0, 3.0), Color::WHITE, 1.0);
+
+        assert!(is_light_visible(&scene, &hit, &light));
+    }
+
+    #[test]
+    fn own_surface_does_not_self_occlude() {
+        let material = Material::diffuse(Color::WHITE);
+        let mut scene = scene_with_material(material);
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                0,
+            ))
+            .unwrap();
+        let hit = Intersection::new(1.0, Vec3::new(0.0, 0.0, 1.0), Vec3::new(0.0, 0.0, 1.0), 0);
+        let light = PointLight::new(Vec3::new(0.0, 0.0, 3.0), Color::WHITE, 1.0);
+
+        assert!(is_light_visible(&scene, &hit, &light));
+    }
+
+    #[test]
+    fn offset_prevents_acne_on_lit_surface() {
+        let material = Material::diffuse(Color::WHITE);
+        let mut scene = scene_with_material(material);
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-10.0, -0.1, -10.0),
+                Vec3::new(10.0, 0.0, 10.0),
+                0,
+            ))
+            .unwrap();
+        let hit = Intersection::new(1.0, Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0), 0);
+        let light = PointLight::new(Vec3::new(0.0, 2.0, 0.0), Color::WHITE, 1.0);
+
+        assert!(is_light_visible(&scene, &hit, &light));
+    }
+
+    #[test]
+    fn extremely_close_light_is_handled_safely() {
+        let scene = scene_with_main_cube();
+        let hit = flat_hit();
+        let light = PointLight::new(Vec3::new(0.0, 0.0, 0.00001), Color::WHITE, 1.0);
+
+        assert!(is_light_visible(&scene, &hit, &light));
+        let color = shade_hit(&view_ray(), hit, Material::diffuse(Color::WHITE), &scene);
+        assert!(color.r.is_finite());
+        assert!(color.g.is_finite());
+        assert!(color.b.is_finite());
+    }
+
+    #[test]
+    fn invalid_shadow_interval_does_not_panic() {
+        let scene = scene_with_main_cube();
+        let hit = flat_hit();
+        let light = PointLight::new(hit.position, Color::WHITE, 1.0);
+
+        assert!(is_light_visible(&scene, &hit, &light));
     }
 
     #[test]
@@ -385,6 +568,110 @@ mod tests {
     }
 
     #[test]
+    fn emission_remains_when_light_is_blocked() {
+        let material = Material::new(
+            Color::BLACK,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            Color::new(0.2, 0.1, 0.05),
+        );
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene.add_cube(occluder(0)).unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_eq!(
+            shade_hit(&view_ray(), flat_hit(), material, &scene),
+            material.emission
+        );
+    }
+
+    #[test]
+    fn ambient_remains_when_light_is_blocked() {
+        let material = Material::new(
+            Color::new(0.5, 0.25, 0.75),
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            Color::BLACK,
+        );
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::new(0.2, 0.2, 0.2));
+        scene.add_cube(occluder(0)).unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_eq!(
+            shade_hit(&view_ray(), flat_hit(), material, &scene),
+            Color::new(0.1, 0.05, 0.15)
+        );
+    }
+
+    #[test]
+    fn blocked_light_removes_diffuse_component() {
+        let material = Material::new(Color::WHITE, 0.0, 1.0, 0.0, 0.0, 1.0, Color::BLACK);
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene.add_cube(occluder(0)).unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_eq!(
+            shade_hit(&view_ray(), flat_hit(), material, &scene),
+            Color::BLACK
+        );
+    }
+
+    #[test]
+    fn blocked_light_removes_specular_component() {
+        let material = Material::new(Color::BLACK, 1.0, 32.0, 0.0, 0.0, 1.0, Color::BLACK);
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene.add_cube(occluder(0)).unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_eq!(
+            shade_hit(&view_ray(), flat_hit(), material, &scene),
+            Color::BLACK
+        );
+    }
+
+    #[test]
+    fn visible_light_still_contributes_when_another_light_is_blocked() {
+        let material = Material::new(Color::WHITE, 0.0, 1.0, 0.0, 0.0, 1.0, Color::BLACK);
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene.add_cube(occluder(0)).unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+        scene.add_light(PointLight::new(Vec3::new(2.0, 0.0, 2.0), Color::WHITE, 3.0));
+
+        assert!(shade_hit(&view_ray(), flat_hit(), material, &scene).r > 0.0);
+    }
+
+    #[test]
     fn render_small_framebuffer_contains_cube_and_background_pixels() {
         let mut framebuffer = Framebuffer::new(64, 48);
 
@@ -394,6 +681,32 @@ mod tests {
         let corner_pixel = framebuffer.pixels()[0];
 
         assert_ne!(center_pixel, corner_pixel);
+    }
+
+    #[test]
+    fn render_small_framebuffer_contains_lit_and_shadowed_pixels() {
+        let mut framebuffer = Framebuffer::new(96, 72);
+
+        render_background(&mut framebuffer);
+
+        let mut dark_pixels = 0;
+        let mut bright_pixels = 0;
+
+        for &pixel in framebuffer.pixels() {
+            let r = ((pixel >> 16) & 0xff) as u32;
+            let g = ((pixel >> 8) & 0xff) as u32;
+            let b = (pixel & 0xff) as u32;
+            let brightness = r + g + b;
+
+            if brightness < 80 {
+                dark_pixels += 1;
+            } else if brightness > 260 {
+                bright_pixels += 1;
+            }
+        }
+
+        assert!(dark_pixels > 0);
+        assert!(bright_pixels > 0);
     }
 
     #[test]
