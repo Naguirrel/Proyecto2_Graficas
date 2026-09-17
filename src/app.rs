@@ -30,7 +30,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
     let scene = renderer::sample_scene();
     let mut window = Window::new(
-        "Diorama Raytracing - Materiales texturizados",
+        "Diorama Raytracing - Reflexion, refraccion y skybox",
         WIDTH,
         HEIGHT,
         WindowOptions {
