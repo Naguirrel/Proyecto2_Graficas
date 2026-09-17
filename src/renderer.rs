@@ -9,6 +9,7 @@ use crate::{
     math::{Vec2, Vec3},
     ray::Ray,
     scene::Scene,
+    skybox::Skybox,
     texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
 };
 
@@ -27,6 +28,7 @@ const THEATER_CARPET_TEXTURE_PATH: &str = "assets/textures/theater_carpet.ppm";
 const BRUSHED_METAL_TEXTURE_PATH: &str = "assets/textures/brushed_metal.ppm";
 const TRANSPARENT_PLASTIC_TEXTURE_PATH: &str = "assets/textures/transparent_plastic.ppm";
 const POPCORN_CARDBOARD_TEXTURE_PATH: &str = "assets/textures/popcorn_cardboard.ppm";
+const NIGHT_CINEMA_SKYBOX_TEXTURE_PATH: &str = "assets/textures/night_cinema_skybox.ppm";
 
 #[cfg(test)]
 thread_local! {
@@ -68,6 +70,7 @@ pub(crate) fn sample_scene() -> Scene {
     let metal_texture = scene.add_texture(load_scene_texture(BRUSHED_METAL_TEXTURE_PATH));
     let plastic_texture = scene.add_texture(load_scene_texture(TRANSPARENT_PLASTIC_TEXTURE_PATH));
     let cardboard_texture = scene.add_texture(load_scene_texture(POPCORN_CARDBOARD_TEXTURE_PATH));
+    scene.set_skybox(load_scene_skybox(NIGHT_CINEMA_SKYBOX_TEXTURE_PATH));
 
     let seat_fabric = scene
         .add_material(
@@ -207,6 +210,13 @@ fn fallback_texture() -> Texture {
     Texture::new(1, 1, vec![FALLBACK_TEXTURE_COLOR]).expect("fallback texture is valid")
 }
 
+fn load_scene_skybox(path: &str) -> Skybox {
+    Skybox::from_ppm_file(path)
+        .unwrap_or_else(|_| Skybox::new(fallback_texture()))
+        .with_intensity(1.15)
+        .with_horizontal_rotation(0.08)
+}
+
 #[cfg(test)]
 pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
     trace_ray(scene, ray, 0)
@@ -214,7 +224,7 @@ pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
 
 pub(crate) fn trace_ray(scene: &Scene, ray: &Ray, depth: u32) -> Color {
     let Some(hit) = find_nearest_hit(scene, ray) else {
-        return background_color(ray.direction);
+        return background_color_for_scene(scene, ray.direction);
     };
     let material = resolve_material(scene, hit.material_id);
     let surface_albedo = resolve_surface_albedo(scene, material, hit.uv);
@@ -552,13 +562,21 @@ pub(crate) fn background_color(direction: Vec3) -> Color {
     lower.lerp(upper, t).clamped()
 }
 
+pub(crate) fn background_color_for_scene(scene: &Scene, direction: Vec3) -> Color {
+    scene
+        .skybox()
+        .map(|skybox| skybox.sample_direction(direction))
+        .unwrap_or_else(|| background_color(direction))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        CompositionWeights, MAX_RECURSION_DEPTH, RAY_EPSILON, background_color, is_light_visible,
-        material_texel, reflected_ray, refract, refracted_ray, render_background, render_scene,
-        reset_secondary_ray_count, sample_scene, secondary_ray_count, shade_hit,
-        shade_hit_with_albedo, trace_primary_ray, trace_ray, trace_refraction,
+        CompositionWeights, MAX_RECURSION_DEPTH, RAY_EPSILON, background_color,
+        background_color_for_scene, is_light_visible, material_texel, reflected_ray, refract,
+        refracted_ray, render_background, render_scene, reset_secondary_ray_count, sample_scene,
+        secondary_ray_count, shade_hit, shade_hit_with_albedo, trace_primary_ray, trace_ray,
+        trace_refraction,
     };
     use crate::{
         camera::{Camera, OrbitCamera},
@@ -571,6 +589,7 @@ mod tests {
         math::{Vec2, Vec3},
         ray::Ray,
         scene::Scene,
+        skybox::Skybox,
         texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
     };
 
@@ -607,6 +626,34 @@ mod tests {
             ],
         )
         .unwrap()
+    }
+
+    fn solid_skybox(color: Color) -> Skybox {
+        Skybox::new(Texture::new(1, 1, vec![color]).unwrap())
+    }
+
+    fn cardinal_skybox() -> Skybox {
+        Skybox::new(
+            Texture::new(
+                4,
+                3,
+                vec![
+                    Color::new(0.0, 0.0, 0.3),
+                    Color::new(0.0, 0.0, 0.4),
+                    Color::new(0.0, 0.0, 0.5),
+                    Color::new(0.0, 0.0, 0.3),
+                    Color::new(1.0, 0.0, 0.0),
+                    Color::new(0.0, 1.0, 0.0),
+                    Color::new(0.0, 0.0, 1.0),
+                    Color::new(1.0, 0.0, 0.0),
+                    Color::new(0.2, 0.0, 0.0),
+                    Color::new(0.0, 0.2, 0.0),
+                    Color::new(0.0, 0.0, 0.2),
+                    Color::new(0.2, 0.0, 0.0),
+                ],
+            )
+            .unwrap(),
+        )
     }
 
     fn flat_hit() -> Intersection {
@@ -1043,6 +1090,84 @@ mod tests {
             trace_primary_ray(&ray, &scene).to_u32(),
             background_color(ray.direction).to_u32()
         );
+    }
+
+    #[test]
+    fn scene_without_skybox_keeps_gradient_background() {
+        let scene = Scene::new();
+        let direction = Vec3::new(0.0, 1.0, 0.0);
+
+        assert_color_near(
+            background_color_for_scene(&scene, direction),
+            background_color(direction),
+        );
+    }
+
+    #[test]
+    fn missed_primary_ray_uses_skybox_when_present() {
+        let mut scene = Scene::new();
+        let skybox_color = Color::new(0.7, 0.2, 0.1);
+        scene.set_skybox(solid_skybox(skybox_color));
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0));
+
+        assert_color_near(trace_ray(&scene, &ray, 0), skybox_color);
+    }
+
+    #[test]
+    fn missed_reflected_ray_uses_skybox() {
+        let mut scene = front_cube_scene(1.0);
+        let skybox_color = Color::new(0.1, 0.7, 0.3);
+        scene.set_skybox(solid_skybox(skybox_color));
+
+        assert_color_near(trace_ray(&scene, &front_ray(), 0), skybox_color);
+    }
+
+    #[test]
+    fn refracted_ray_exiting_to_environment_uses_skybox() {
+        let mut scene = transparent_cube_scene(1.0, 0.0);
+        let skybox_color = Color::new(0.2, 0.3, 0.8);
+        scene.set_skybox(solid_skybox(skybox_color));
+
+        assert_color_near(trace_ray(&scene, &front_ray(), 0), skybox_color);
+    }
+
+    #[test]
+    fn reflective_metal_can_show_skybox_color() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::BLACK);
+        scene.set_skybox(solid_skybox(Color::new(0.3, 0.6, 0.9)));
+        let metal_id = scene
+            .add_material(Material::new(
+                Color::BLACK,
+                0.9,
+                96.0,
+                1.0,
+                0.0,
+                1.0,
+                Color::BLACK,
+            ))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                metal_id,
+            ))
+            .unwrap();
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.3, 0.6, 0.9),
+        );
+    }
+
+    #[test]
+    fn transparent_material_can_show_skybox_color() {
+        let mut scene = transparent_cube_scene(1.0, 0.0);
+        let skybox_color = Color::new(0.6, 0.4, 0.2);
+        scene.set_skybox(solid_skybox(skybox_color));
+
+        assert_color_near(trace_ray(&scene, &front_ray(), 0), skybox_color);
     }
 
     #[test]
@@ -1581,6 +1706,7 @@ mod tests {
         let materials = scene.materials();
 
         assert_eq!(scene.textures().len(), 5);
+        assert!(scene.skybox().is_some());
         assert_eq!(materials.len(), 5);
         let mut texture_ids = materials
             .iter()
@@ -2067,6 +2193,76 @@ mod tests {
                 .iter()
                 .all(|&pixel| pixel <= 0x00ff_ffff)
         );
+    }
+
+    #[test]
+    fn framebuffer_with_skybox_keeps_dimensions() {
+        let mut scene = Scene::new();
+        scene.set_skybox(cardinal_skybox());
+        let mut framebuffer = Framebuffer::new(7, 5);
+        let camera = Camera::new(
+            Vec3::ZERO,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            60.0,
+            framebuffer.width() as f32 / framebuffer.height() as f32,
+        );
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert_eq!(framebuffer.width(), 7);
+        assert_eq!(framebuffer.height(), 5);
+        assert_eq!(framebuffer.pixels().len(), 35);
+    }
+
+    #[test]
+    fn skybox_rendered_framebuffer_has_valid_pixels() {
+        let mut scene = Scene::new();
+        scene.set_skybox(cardinal_skybox());
+        let mut framebuffer = Framebuffer::new(4, 3);
+        let camera = Camera::new(
+            Vec3::ZERO,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            60.0,
+            framebuffer.width() as f32 / framebuffer.height() as f32,
+        );
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert!(
+            framebuffer
+                .pixels()
+                .iter()
+                .all(|&pixel| pixel <= 0x00ff_ffff)
+        );
+    }
+
+    #[test]
+    fn orbit_camera_changes_visible_skybox_region() {
+        let mut scene = Scene::new();
+        scene.set_skybox(cardinal_skybox());
+        let mut first = Framebuffer::new(1, 1);
+        let mut second = Framebuffer::new(1, 1);
+        let first_camera = Camera::new(
+            Vec3::ZERO,
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            60.0,
+            1.0,
+        );
+        let second_camera = Camera::new(
+            Vec3::ZERO,
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            60.0,
+            1.0,
+        );
+
+        render_scene(&mut first, &first_camera, &scene);
+        render_scene(&mut second, &second_camera, &scene);
+
+        assert_ne!(first.pixels(), second.pixels());
     }
 
     #[test]

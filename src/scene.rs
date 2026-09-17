@@ -1,6 +1,6 @@
 use crate::{
     color::Color, cube::Cube, intersection::Intersection, light::PointLight, material::Material,
-    ray::Ray, texture::Texture,
+    ray::Ray, skybox::Skybox, texture::Texture,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +16,7 @@ pub struct Scene {
     textures: Vec<Texture>,
     lights: Vec<PointLight>,
     ambient_light: Color,
+    skybox: Option<Skybox>,
 }
 
 impl Scene {
@@ -26,6 +27,7 @@ impl Scene {
             textures: Vec::new(),
             lights: Vec::new(),
             ambient_light: Color::new(0.08, 0.08, 0.08),
+            skybox: None,
         }
     }
 
@@ -60,6 +62,14 @@ impl Scene {
 
     pub fn add_light(&mut self, light: PointLight) {
         self.lights.push(light);
+    }
+
+    pub fn set_skybox(&mut self, skybox: Skybox) {
+        self.skybox = Some(skybox);
+    }
+
+    pub fn skybox(&self) -> Option<&Skybox> {
+        self.skybox.as_ref()
     }
 
     pub fn material(&self, material_id: usize) -> Option<&Material> {
@@ -119,6 +129,7 @@ mod tests {
         material::Material,
         math::{Vec2, Vec3},
         ray::Ray,
+        skybox::Skybox,
         texture::{Texture, WrapMode},
     };
 
@@ -140,6 +151,7 @@ mod tests {
         assert!(scene.materials().is_empty());
         assert!(scene.textures().is_empty());
         assert!(scene.lights().is_empty());
+        assert!(scene.skybox().is_none());
     }
 
     #[test]
@@ -231,6 +243,18 @@ mod tests {
         scene.add_light(second);
 
         assert_eq!(scene.lights(), &[first, second]);
+    }
+
+    #[test]
+    fn skybox_can_be_configured_and_read() {
+        let mut scene = Scene::new();
+        let skybox = Skybox::new(white_texture()).with_intensity(0.5);
+
+        scene.set_skybox(skybox);
+
+        assert!(scene.skybox().is_some());
+        assert_eq!(scene.skybox().unwrap().texture().width(), 1);
+        assert_eq!(scene.skybox().unwrap().intensity(), 0.5);
     }
 
     #[test]

@@ -10,4 +10,5 @@ pub mod math;
 pub mod ray;
 pub mod renderer;
 pub mod scene;
+pub mod skybox;
 pub mod texture;
