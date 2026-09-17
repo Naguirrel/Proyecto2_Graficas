@@ -250,6 +250,13 @@ mod tests {
     use crate::{color::Color, math::Vec2};
 
     const DEMO_TEXTURE: &str = include_str!("../assets/textures/demo_checker.ppm");
+    const MATERIAL_TEXTURE_PATHS: [&str; 5] = [
+        "assets/textures/seat_fabric.ppm",
+        "assets/textures/theater_carpet.ppm",
+        "assets/textures/brushed_metal.ppm",
+        "assets/textures/transparent_plastic.ppm",
+        "assets/textures/popcorn_cardboard.ppm",
+    ];
 
     fn assert_color_near(left: Color, right: Color) {
         assert!(
@@ -501,5 +508,30 @@ mod tests {
 
         assert_eq!(texture.width(), 4);
         assert_eq!(texture.height(), 4);
+    }
+
+    #[test]
+    fn five_material_texture_files_load() {
+        for path in MATERIAL_TEXTURE_PATHS {
+            let texture = Texture::from_ppm_file(path).unwrap();
+
+            assert!(texture.width() > 0);
+            assert!(texture.height() > 0);
+        }
+    }
+
+    #[test]
+    fn five_material_texture_files_have_valid_pixels() {
+        for path in MATERIAL_TEXTURE_PATHS {
+            let texture = Texture::from_ppm_file(path).unwrap();
+
+            assert!(texture.pixel(0, 0).is_some());
+            assert!(
+                texture
+                    .pixel(texture.width() - 1, texture.height() - 1)
+                    .is_some()
+            );
+            assert_eq!(texture.pixel(texture.width(), 0), None);
+        }
     }
 }

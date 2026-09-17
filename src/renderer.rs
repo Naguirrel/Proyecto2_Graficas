@@ -6,7 +6,7 @@ use crate::{
     intersection::Intersection,
     light::PointLight,
     material::Material,
-    math::Vec3,
+    math::{Vec2, Vec3},
     ray::Ray,
     scene::Scene,
     texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
@@ -15,7 +15,11 @@ use crate::{
 const HIT_T_MIN: f32 = 0.001;
 const HIT_T_MAX: f32 = 1_000.0;
 const SHADOW_EPSILON: f32 = 0.001;
-const DEMO_TEXTURE_PATH: &str = "assets/textures/demo_checker.ppm";
+const SEAT_FABRIC_TEXTURE_PATH: &str = "assets/textures/seat_fabric.ppm";
+const THEATER_CARPET_TEXTURE_PATH: &str = "assets/textures/theater_carpet.ppm";
+const BRUSHED_METAL_TEXTURE_PATH: &str = "assets/textures/brushed_metal.ppm";
+const TRANSPARENT_PLASTIC_TEXTURE_PATH: &str = "assets/textures/transparent_plastic.ppm";
+const POPCORN_CARDBOARD_TEXTURE_PATH: &str = "assets/textures/popcorn_cardboard.ppm";
 
 pub fn render_background(framebuffer: &mut Framebuffer) {
     let aspect_ratio = framebuffer.width() as f32 / framebuffer.height().max(1) as f32;
@@ -32,20 +36,12 @@ pub fn render_background(framebuffer: &mut Framebuffer) {
 }
 
 pub fn render_scene(framebuffer: &mut Framebuffer, camera: &Camera, scene: &Scene) {
-    let texture = match Texture::from_ppm_file(DEMO_TEXTURE_PATH) {
-        Ok(texture) => Some(texture),
-        Err(error) => {
-            eprintln!("No se pudo cargar {DEMO_TEXTURE_PATH}: {error:?}. Usando fallback magenta.");
-            None
-        }
-    };
-
     framebuffer.clear(Color::BLACK);
 
     for y in 0..framebuffer.height() {
         for x in 0..framebuffer.width() {
             let ray = camera.ray_for_pixel(x, y, framebuffer.width(), framebuffer.height());
-            let color = trace_primary_ray_with_texture(&ray, scene, texture.as_ref());
+            let color = trace_primary_ray_with_material_textures(&ray, scene);
 
             framebuffer.set_pixel(x, y, color);
         }
@@ -55,55 +51,125 @@ pub fn render_scene(framebuffer: &mut Framebuffer, camera: &Camera, scene: &Scen
 pub(crate) fn sample_scene() -> Scene {
     let mut scene = Scene::new();
     scene.set_ambient_light(Color::new(0.07, 0.065, 0.08));
-    let floor = scene.add_material(Material::new(
-        Color::new(0.46, 0.46, 0.50),
-        0.15,
-        12.0,
-        0.0,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ));
-    let blue = scene.add_material(Material::new(
-        Color::new(0.28, 0.42, 0.78),
-        0.75,
-        48.0,
-        0.0,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ));
-    let red = scene.add_material(Material::new(
-        Color::new(0.72, 0.22, 0.18),
-        0.25,
-        18.0,
-        0.0,
-        0.0,
-        1.0,
-        Color::new(0.02, 0.0, 0.0),
-    ));
+    let seat_texture = scene.add_texture(load_scene_texture(SEAT_FABRIC_TEXTURE_PATH));
+    let carpet_texture = scene.add_texture(load_scene_texture(THEATER_CARPET_TEXTURE_PATH));
+    let metal_texture = scene.add_texture(load_scene_texture(BRUSHED_METAL_TEXTURE_PATH));
+    let plastic_texture = scene.add_texture(load_scene_texture(TRANSPARENT_PLASTIC_TEXTURE_PATH));
+    let cardboard_texture = scene.add_texture(load_scene_texture(POPCORN_CARDBOARD_TEXTURE_PATH));
+
+    let seat_fabric = scene
+        .add_material(
+            Material::new(
+                Color::new(0.78, 0.34, 0.34),
+                0.22,
+                18.0,
+                0.03,
+                0.0,
+                1.0,
+                Color::BLACK,
+            )
+            .with_texture(seat_texture, Vec2::new(3.0, 2.0), WrapMode::Repeat),
+        )
+        .expect("seat texture was registered before the material");
+    let theater_carpet = scene
+        .add_material(
+            Material::new(
+                Color::new(0.42, 0.32, 0.56),
+                0.08,
+                8.0,
+                0.01,
+                0.0,
+                1.0,
+                Color::BLACK,
+            )
+            .with_texture(carpet_texture, Vec2::new(5.0, 4.0), WrapMode::Repeat),
+        )
+        .expect("carpet texture was registered before the material");
+    let brushed_metal = scene
+        .add_material(
+            Material::new(
+                Color::new(0.76, 0.76, 0.78),
+                0.9,
+                96.0,
+                0.78,
+                0.0,
+                1.0,
+                Color::BLACK,
+            )
+            .with_texture(metal_texture, Vec2::new(2.0, 1.0), WrapMode::Clamp),
+        )
+        .expect("metal texture was registered before the material");
+    let transparent_plastic = scene
+        .add_material(
+            Material::new(
+                Color::new(0.72, 0.88, 1.0),
+                0.55,
+                64.0,
+                0.35,
+                0.72,
+                1.49,
+                Color::BLACK,
+            )
+            .with_texture(plastic_texture, Vec2::new(1.5, 1.5), WrapMode::Clamp),
+        )
+        .expect("plastic texture was registered before the material");
+    let popcorn_cardboard = scene
+        .add_material(
+            Material::new(
+                Color::new(1.0, 0.92, 0.72),
+                0.18,
+                14.0,
+                0.02,
+                0.0,
+                1.0,
+                Color::new(0.02, 0.015, 0.005),
+            )
+            .with_texture(cardboard_texture, Vec2::new(2.0, 2.0), WrapMode::Repeat),
+        )
+        .expect("cardboard texture was registered before the material");
 
     scene
         .add_cube(Cube::new(
             Vec3::new(-4.0, -1.15, -4.0),
             Vec3::new(4.0, -1.05, 3.0),
-            floor,
+            theater_carpet,
         ))
         .expect("sample floor uses a registered material");
     scene
         .add_cube(Cube::new(
-            Vec3::new(-1.0, -1.0, -1.0),
-            Vec3::new(1.0, 1.0, 1.0),
-            blue,
+            Vec3::new(-3.0, -1.0, -0.9),
+            Vec3::new(-2.0, 0.25, 0.35),
+            seat_fabric,
         ))
-        .expect("sample cube uses a registered material");
+        .expect("seat sample cube uses a registered material");
     scene
         .add_cube(Cube::new(
-            Vec3::new(1.15, -1.0, -0.5),
-            Vec3::new(1.75, -0.25, 0.15),
-            red,
+            Vec3::new(-1.45, -1.0, -1.15),
+            Vec3::new(-0.45, -0.15, -0.15),
+            theater_carpet,
         ))
-        .expect("sample accent cube uses a registered material");
+        .expect("carpet sample cube uses a registered material");
+    scene
+        .add_cube(Cube::new(
+            Vec3::new(0.0, -1.0, -0.8),
+            Vec3::new(0.85, 0.35, 0.05),
+            brushed_metal,
+        ))
+        .expect("metal sample cube uses a registered material");
+    scene
+        .add_cube(Cube::new(
+            Vec3::new(1.2, -1.0, -1.0),
+            Vec3::new(2.0, 0.15, -0.2),
+            transparent_plastic,
+        ))
+        .expect("plastic sample cube uses a registered material");
+    scene
+        .add_cube(Cube::new(
+            Vec3::new(2.35, -1.0, -0.65),
+            Vec3::new(3.1, 0.55, 0.15),
+            popcorn_cardboard,
+        ))
+        .expect("cardboard sample cube uses a registered material");
     scene.add_light(PointLight::new(
         Vec3::new(-2.7, 4.6, 2.8),
         Color::new(1.0, 0.82, 0.58),
@@ -118,28 +184,44 @@ pub(crate) fn sample_scene() -> Scene {
     scene
 }
 
-#[cfg(test)]
-pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
-    trace_primary_ray_with_texture(ray, scene, None)
+fn load_scene_texture(path: &str) -> Texture {
+    Texture::from_ppm_file(path).unwrap_or_else(|error| {
+        eprintln!("No se pudo cargar {path}: {error:?}. Usando fallback magenta.");
+        fallback_texture()
+    })
 }
 
-pub(crate) fn trace_primary_ray_with_texture(
-    ray: &Ray,
-    scene: &Scene,
-    texture: Option<&Texture>,
-) -> Color {
+fn fallback_texture() -> Texture {
+    Texture::new(1, 1, vec![FALLBACK_TEXTURE_COLOR]).expect("fallback texture is valid")
+}
+
+#[cfg(test)]
+pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
+    trace_primary_ray_with_material_textures(ray, scene)
+}
+
+pub(crate) fn trace_primary_ray_with_material_textures(ray: &Ray, scene: &Scene) -> Color {
     match scene.intersect(ray, HIT_T_MIN, HIT_T_MAX) {
         Some(hit) => {
             let material = scene.material(hit.material_id).copied().unwrap_or_default();
-            let texture_color = texture
-                .map(|texture| texture.sample(hit.uv, WrapMode::Repeat))
-                .unwrap_or(FALLBACK_TEXTURE_COLOR);
-            let surface_albedo = material.albedo * texture_color;
+            let surface_albedo = material.albedo * material_texel(scene, material, hit.uv);
 
             shade_hit_with_albedo(ray, hit, material, surface_albedo, scene)
         }
         None => background_color(ray.direction),
     }
+}
+
+pub(crate) fn material_texel(scene: &Scene, material: Material, uv: Vec2) -> Color {
+    let Some(texture_id) = material.texture_id else {
+        return Color::WHITE;
+    };
+    let Some(texture) = scene.texture(texture_id) else {
+        return FALLBACK_TEXTURE_COLOR;
+    };
+    let scaled_uv = Vec2::new(uv.u * material.uv_scale.u, uv.v * material.uv_scale.v);
+
+    texture.sample(scaled_uv, material.wrap_mode)
 }
 
 /// Local Phong shading: emission + ambient + Lambert diffuse + Phong specular.
@@ -239,8 +321,8 @@ pub(crate) fn background_color(direction: Vec3) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        background_color, is_light_visible, render_background, render_scene, sample_scene,
-        shade_hit, shade_hit_with_albedo, trace_primary_ray,
+        background_color, is_light_visible, material_texel, render_background, render_scene,
+        sample_scene, shade_hit, shade_hit_with_albedo, trace_primary_ray,
     };
     use crate::{
         camera::{Camera, OrbitCamera},
@@ -253,11 +335,14 @@ mod tests {
         math::{Vec2, Vec3},
         ray::Ray,
         scene::Scene,
+        texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
     };
 
     fn scene_with_main_cube() -> Scene {
         let mut scene = Scene::new();
-        let material_id = scene.add_material(Material::diffuse(Color::new(0.28, 0.42, 0.78)));
+        let material_id = scene
+            .add_material(Material::diffuse(Color::new(0.28, 0.42, 0.78)))
+            .unwrap();
         scene
             .add_cube(Cube::new(
                 Vec3::new(-1.0, -1.0, -1.0),
@@ -270,8 +355,22 @@ mod tests {
 
     fn scene_with_material(material: Material) -> Scene {
         let mut scene = Scene::new();
-        scene.add_material(material);
+        scene.add_material(material).unwrap();
         scene
+    }
+
+    fn corner_texture() -> Texture {
+        Texture::new(
+            2,
+            2,
+            vec![
+                Color::new(1.0, 0.0, 0.0),
+                Color::new(0.0, 1.0, 0.0),
+                Color::new(0.0, 0.0, 1.0),
+                Color::new(1.0, 1.0, 1.0),
+            ],
+        )
+        .unwrap()
     }
 
     fn flat_hit() -> Intersection {
@@ -430,6 +529,76 @@ mod tests {
     }
 
     #[test]
+    fn untextured_material_uses_neutral_white_texel() {
+        let scene = Scene::new();
+        let material = Material::diffuse(Color::new(0.2, 0.3, 0.4));
+
+        assert_eq!(
+            material_texel(&scene, material, Vec2::new(0.5, 0.5)),
+            Color::WHITE
+        );
+    }
+
+    #[test]
+    fn invalid_material_texture_uses_fallback_texel() {
+        let scene = Scene::new();
+        let material =
+            Material::diffuse(Color::WHITE).with_texture(10, Vec2::new(1.0, 1.0), WrapMode::Clamp);
+
+        assert_eq!(
+            material_texel(&scene, material, Vec2::new(0.5, 0.5)),
+            FALLBACK_TEXTURE_COLOR
+        );
+    }
+
+    #[test]
+    fn repeat_sampling_respects_material_uv_scale() {
+        let mut scene = Scene::new();
+        let texture_id = scene.add_texture(corner_texture());
+        let material = Material::diffuse(Color::WHITE).with_texture(
+            texture_id,
+            Vec2::new(2.0, 2.0),
+            WrapMode::Repeat,
+        );
+
+        assert_eq!(
+            material_texel(&scene, material, Vec2::new(0.875, 0.875)),
+            Color::new(0.0, 1.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn clamp_sampling_respects_material_wrap_mode() {
+        let mut scene = Scene::new();
+        let texture_id = scene.add_texture(corner_texture());
+        let material = Material::diffuse(Color::WHITE).with_texture(
+            texture_id,
+            Vec2::new(2.0, 2.0),
+            WrapMode::Clamp,
+        );
+
+        assert_eq!(
+            material_texel(&scene, material, Vec2::new(0.875, 0.875)),
+            Color::new(0.0, 1.0, 0.0)
+        );
+    }
+
+    #[test]
+    fn final_albedo_combines_albedo_and_texel() {
+        let mut scene = Scene::new();
+        let texture_id =
+            scene.add_texture(Texture::new(1, 1, vec![Color::new(0.5, 0.25, 1.0)]).unwrap());
+        let material = Material::diffuse(Color::new(0.4, 0.8, 0.2)).with_texture(
+            texture_id,
+            Vec2::new(1.0, 1.0),
+            WrapMode::Repeat,
+        );
+        let surface_albedo = material.albedo * material_texel(&scene, material, Vec2::ZERO);
+
+        assert_eq!(surface_albedo, Color::new(0.2, 0.2, 0.2));
+    }
+
+    #[test]
     fn ray_missing_cube_uses_background() {
         let ray = Ray::new(Vec3::new(3.0, 2.0, 5.0), Vec3::new(0.0, 1.0, 0.0));
         let scene = scene_with_main_cube();
@@ -466,10 +635,62 @@ mod tests {
     }
 
     #[test]
+    fn sample_scene_uses_five_distinct_textured_materials() {
+        let scene = sample_scene();
+        let materials = scene.materials();
+
+        assert_eq!(scene.textures().len(), 5);
+        assert_eq!(materials.len(), 5);
+        let mut texture_ids = materials
+            .iter()
+            .map(|material| material.texture_id.unwrap())
+            .collect::<Vec<_>>();
+        texture_ids.sort_unstable();
+        texture_ids.dedup();
+        assert_eq!(texture_ids.len(), 5);
+
+        for material in materials {
+            assert!((0.0..=1.0).contains(&material.specular_strength));
+            assert!((0.0..=1.0).contains(&material.reflectivity));
+            assert!((0.0..=1.0).contains(&material.transparency));
+            assert!(material.shininess >= 0.0);
+            assert!(material.refractive_index >= 1.0);
+        }
+    }
+
+    #[test]
+    fn sample_scene_material_parameters_match_roles() {
+        let scene = sample_scene();
+        let materials = scene.materials();
+        let seat = materials[0];
+        let carpet = materials[1];
+        let metal = materials[2];
+        let plastic = materials[3];
+        let cardboard = materials[4];
+
+        assert_eq!(seat.transparency, 0.0);
+        assert!(seat.reflectivity < 0.1);
+        assert_eq!(carpet.transparency, 0.0);
+        assert!(carpet.specular_strength < 0.1);
+        assert!(carpet.reflectivity < 0.05);
+        assert!(metal.specular_strength > 0.8);
+        assert!(metal.reflectivity > 0.7);
+        assert!(plastic.transparency > 0.7);
+        assert!(plastic.reflectivity > 0.3);
+        assert!(plastic.refractive_index >= 1.49);
+        assert_eq!(cardboard.transparency, 0.0);
+        assert!(cardboard.reflectivity < 0.1);
+    }
+
+    #[test]
     fn scene_intersection_selects_nearest_cube_for_renderer() {
         let mut scene = Scene::new();
-        let near_id = scene.add_material(Material::diffuse(Color::new(0.7, 0.2, 0.2)));
-        let far_id = scene.add_material(Material::diffuse(Color::new(0.2, 0.2, 0.7)));
+        let near_id = scene
+            .add_material(Material::diffuse(Color::new(0.7, 0.2, 0.2)))
+            .unwrap();
+        let far_id = scene
+            .add_material(Material::diffuse(Color::new(0.2, 0.2, 0.7)))
+            .unwrap();
         let near = Cube::new(
             Vec3::new(-0.5, -0.5, 1.0),
             Vec3::new(0.5, 0.5, 2.0),
@@ -547,6 +768,50 @@ mod tests {
         assert!(color.r > surface_albedo.r * scene.ambient_light().r);
         assert!(color.g > surface_albedo.g * scene.ambient_light().g);
         assert!(color.b > surface_albedo.b * scene.ambient_light().b);
+    }
+
+    #[test]
+    fn textured_shading_preserves_shadows() {
+        let material = Material::new(Color::WHITE, 0.0, 1.0, 0.0, 0.0, 1.0, Color::BLACK);
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene.add_cube(occluder(0)).unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_eq!(
+            shade_hit_with_albedo(
+                &view_ray(),
+                flat_hit(),
+                material,
+                Color::new(0.25, 0.5, 0.75),
+                &scene,
+            ),
+            Color::BLACK
+        );
+    }
+
+    #[test]
+    fn emission_survives_textured_albedo() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::BLACK);
+        let material = Material::new(
+            Color::WHITE,
+            0.0,
+            1.0,
+            0.0,
+            0.0,
+            1.0,
+            Color::new(0.1, 0.2, 0.3),
+        );
+
+        assert_eq!(
+            shade_hit_with_albedo(&view_ray(), flat_hit(), material, Color::BLACK, &scene),
+            material.emission
+        );
     }
 
     #[test]
@@ -787,7 +1052,14 @@ mod tests {
     #[test]
     fn render_small_framebuffer_contains_texture_variation() {
         let mut scene = Scene::new();
-        let material_id = scene.add_material(Material::diffuse(Color::WHITE));
+        let texture_id = scene.add_texture(corner_texture());
+        let material_id = scene
+            .add_material(Material::diffuse(Color::WHITE).with_texture(
+                texture_id,
+                Vec2::new(1.0, 1.0),
+                WrapMode::Clamp,
+            ))
+            .unwrap();
         scene.set_ambient_light(Color::WHITE);
         scene
             .add_cube(Cube::new(
@@ -831,6 +1103,34 @@ mod tests {
                 .iter()
                 .all(|&pixel| pixel <= 0x00ff_ffff)
         );
+    }
+
+    #[test]
+    fn sample_scene_framebuffer_contains_multiple_material_colors() {
+        let scene = sample_scene();
+        let mut framebuffer = Framebuffer::new(80, 48);
+        let aspect_ratio = framebuffer.width() as f32 / framebuffer.height() as f32;
+        let camera = Camera::new(
+            Vec3::new(3.8, 2.6, 5.5),
+            Vec3::new(0.0, -0.25, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            55.0,
+            aspect_ratio,
+        );
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        let mut distinct = Vec::new();
+        for &pixel in framebuffer.pixels() {
+            if !distinct.contains(&pixel) {
+                distinct.push(pixel);
+            }
+            if distinct.len() >= 8 {
+                break;
+            }
+        }
+
+        assert!(distinct.len() >= 8);
     }
 
     #[test]
