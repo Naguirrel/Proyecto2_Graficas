@@ -21,6 +21,7 @@ pub(crate) const MAX_RECURSION_DEPTH: u32 = 4;
 const RAY_EPSILON: f32 = 0.001;
 const SHADOW_EPSILON: f32 = RAY_EPSILON;
 const MIN_REFLECTIVITY: f32 = 0.0001;
+const MIN_TRANSPARENCY: f32 = 0.0001;
 const SEAT_FABRIC_TEXTURE_PATH: &str = "assets/textures/seat_fabric.ppm";
 const THEATER_CARPET_TEXTURE_PATH: &str = "assets/textures/theater_carpet.ppm";
 const BRUSHED_METAL_TEXTURE_PATH: &str = "assets/textures/brushed_metal.ppm";
@@ -169,8 +170,8 @@ pub(crate) fn sample_scene() -> Scene {
         .expect("metal sample cube uses a registered material");
     scene
         .add_cube(Cube::new(
-            Vec3::new(1.2, -1.0, -1.0),
-            Vec3::new(2.0, 0.15, -0.2),
+            Vec3::new(1.95, -1.0, 0.2),
+            Vec3::new(2.75, 0.18, 0.95),
             transparent_plastic,
         ))
         .expect("plastic sample cube uses a registered material");
@@ -219,12 +220,13 @@ pub(crate) fn trace_ray(scene: &Scene, ray: &Ray, depth: u32) -> Color {
     let surface_albedo = resolve_surface_albedo(scene, material, hit.uv);
     let local_color = shade_hit_with_albedo(ray, hit, material, surface_albedo, scene);
 
-    match trace_reflection(scene, ray, hit, material, depth) {
-        Some(reflected_color) => (local_color * (1.0 - material.reflectivity)
-            + reflected_color * material.reflectivity)
-            .clamped(),
-        None => local_color,
+    // At the recursion limit, secondary paths stop and the stable fallback is
+    // the already-computed local Phong color.
+    if depth >= MAX_RECURSION_DEPTH {
+        return local_color;
     }
+
+    compose_secondary_paths(scene, ray, hit, material, local_color, depth)
 }
 
 fn find_nearest_hit(scene: &Scene, ray: &Ray) -> Option<Intersection> {
@@ -239,6 +241,65 @@ fn resolve_surface_albedo(scene: &Scene, material: Material, uv: Vec2) -> Color 
     material.albedo * material_texel(scene, material, uv)
 }
 
+#[derive(Debug, Clone, Copy)]
+struct CompositionWeights {
+    local: f32,
+    reflection: f32,
+    refraction: f32,
+}
+
+impl CompositionWeights {
+    fn new(material: Material) -> Self {
+        Self {
+            local: (1.0 - material.transparency) * (1.0 - material.reflectivity),
+            reflection: material.reflectivity,
+            refraction: material.transparency * (1.0 - material.reflectivity),
+        }
+    }
+
+    #[cfg(test)]
+    fn sum(self) -> f32 {
+        self.local + self.reflection + self.refraction
+    }
+}
+
+fn compose_secondary_paths(
+    scene: &Scene,
+    ray: &Ray,
+    hit: Intersection,
+    material: Material,
+    local_color: Color,
+    depth: u32,
+) -> Color {
+    let weights = CompositionWeights::new(material);
+    let reflected_color = if weights.reflection > MIN_REFLECTIVITY {
+        trace_reflection(scene, ray, hit, material, depth)
+    } else {
+        None
+    };
+    let refracted_color = if weights.refraction > MIN_TRANSPARENCY {
+        trace_refraction(scene, ray, hit, material, depth)
+    } else {
+        None
+    };
+
+    let mut color = local_color * weights.local;
+
+    if let Some(reflected_color) = reflected_color {
+        color += reflected_color * weights.reflection;
+    } else {
+        color += local_color * weights.reflection;
+    }
+
+    if let Some(refracted_color) = refracted_color {
+        color += refracted_color * weights.refraction;
+    } else {
+        color += local_color * weights.refraction;
+    }
+
+    color.clamped()
+}
+
 fn trace_reflection(
     scene: &Scene,
     ray: &Ray,
@@ -250,8 +311,6 @@ fn trace_reflection(
         return None;
     }
 
-    // At the recursion limit, the stable fallback is the already-computed local
-    // Phong color; no secondary ray is launched from this hit.
     if depth >= MAX_RECURSION_DEPTH {
         return None;
     }
@@ -260,6 +319,35 @@ fn trace_reflection(
 
     record_secondary_ray();
     Some(trace_ray(scene, &reflected_ray, depth + 1))
+}
+
+fn trace_refraction(
+    scene: &Scene,
+    ray: &Ray,
+    hit: Intersection,
+    material: Material,
+    depth: u32,
+) -> Option<Color> {
+    if material.transparency <= MIN_TRANSPARENCY {
+        return None;
+    }
+
+    if depth >= MAX_RECURSION_DEPTH {
+        return None;
+    }
+
+    match refracted_ray(ray, hit, material) {
+        Some(ray) => {
+            record_secondary_ray();
+            Some(trace_ray(scene, &ray, depth + 1))
+        }
+        None => {
+            let reflected_ray = reflected_ray(ray, hit)?;
+
+            record_secondary_ray();
+            Some(trace_ray(scene, &reflected_ray, depth + 1))
+        }
+    }
 }
 
 fn reflected_ray(ray: &Ray, hit: Intersection) -> Option<Ray> {
@@ -278,6 +366,66 @@ fn reflected_ray(ray: &Ray, hit: Intersection) -> Option<Ray> {
     let reflected_origin = hit.position + offset_direction * RAY_EPSILON;
 
     Some(Ray::new(reflected_origin, reflected_direction))
+}
+
+fn refracted_ray(ray: &Ray, hit: Intersection, material: Material) -> Option<Ray> {
+    let incident_direction = ray.direction.normalized();
+    let outward_normal = hit.normal.normalized();
+
+    if incident_direction == Vec3::ZERO || outward_normal == Vec3::ZERO {
+        return None;
+    }
+
+    let entering = incident_direction.dot(outward_normal) < 0.0;
+    let (n1, n2, formula_normal) = if entering {
+        (1.0, material.refractive_index, outward_normal)
+    } else {
+        (material.refractive_index, 1.0, -outward_normal)
+    };
+    let eta_ratio = n1 / n2;
+    let refracted_direction = refract(incident_direction, formula_normal, eta_ratio)?;
+    let offset_direction = if refracted_direction.dot(outward_normal) >= 0.0 {
+        outward_normal
+    } else {
+        -outward_normal
+    };
+    let refracted_origin = hit.position + offset_direction * RAY_EPSILON;
+
+    Some(Ray::new(refracted_origin, refracted_direction))
+}
+
+/// Refracts `incident` through a surface with `normal` opposing the incoming ray.
+/// `eta_ratio` is n1 / n2, where n1 is the current medium's refractive index and
+/// n2 is the destination medium's refractive index. Returns `None` for total
+/// internal reflection or invalid inputs.
+pub(crate) fn refract(incident: Vec3, normal: Vec3, eta_ratio: f32) -> Option<Vec3> {
+    if !eta_ratio.is_finite() || eta_ratio <= 0.0 {
+        return None;
+    }
+
+    let incident = incident.normalized();
+    let normal = normal.normalized();
+
+    if incident == Vec3::ZERO || normal == Vec3::ZERO {
+        return None;
+    }
+
+    let cos_theta = (-incident).dot(normal).clamp(0.0, 1.0);
+    let perpendicular = (incident + normal * cos_theta) * eta_ratio;
+    let parallel_squared = 1.0 - perpendicular.length_squared();
+
+    if parallel_squared < -0.0001 {
+        return None;
+    }
+
+    let parallel = normal * -parallel_squared.max(0.0).sqrt();
+    let refracted = (perpendicular + parallel).normalized();
+
+    if refracted == Vec3::ZERO {
+        None
+    } else {
+        Some(refracted)
+    }
 }
 
 #[cfg(test)]
@@ -407,9 +555,10 @@ pub(crate) fn background_color(direction: Vec3) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_RECURSION_DEPTH, RAY_EPSILON, background_color, is_light_visible, material_texel,
-        reflected_ray, render_background, render_scene, reset_secondary_ray_count, sample_scene,
-        secondary_ray_count, shade_hit, shade_hit_with_albedo, trace_primary_ray, trace_ray,
+        CompositionWeights, MAX_RECURSION_DEPTH, RAY_EPSILON, background_color, is_light_visible,
+        material_texel, reflected_ray, refract, refracted_ray, render_background, render_scene,
+        reset_secondary_ray_count, sample_scene, secondary_ray_count, shade_hit,
+        shade_hit_with_albedo, trace_primary_ray, trace_ray, trace_refraction,
     };
     use crate::{
         camera::{Camera, OrbitCamera},
@@ -491,6 +640,14 @@ mod tests {
         );
     }
 
+    fn assert_near(left: f32, right: f32) {
+        assert!((left - right).abs() < 0.0001, "{left} != {right}");
+    }
+
+    fn assert_vec_near(left: Vec3, right: Vec3) {
+        assert!(left.approx_eq(right), "{left:?} != {right:?}");
+    }
+
     fn assert_finite_unit_color(color: Color) {
         assert!(color.r.is_finite());
         assert!(color.g.is_finite());
@@ -528,8 +685,63 @@ mod tests {
         scene
     }
 
+    fn transparent_material(transparency: f32, reflectivity: f32) -> Material {
+        Material::new(
+            Color::new(0.2, 0.4, 0.6),
+            0.0,
+            1.0,
+            reflectivity,
+            transparency,
+            1.5,
+            Color::BLACK,
+        )
+    }
+
+    fn transparent_cube_scene(transparency: f32, reflectivity: f32) -> Scene {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let material_id = scene
+            .add_material(transparent_material(transparency, reflectivity))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                material_id,
+            ))
+            .unwrap();
+        scene
+    }
+
     fn front_ray() -> Ray {
         Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0))
+    }
+
+    fn transparent_target_scene(textured_target: bool) -> Scene {
+        let mut scene = transparent_cube_scene(1.0, 0.0);
+        let target_material = if textured_target {
+            let texture_id =
+                scene.add_texture(Texture::new(1, 1, vec![Color::new(0.9, 0.1, 0.2)]).unwrap());
+
+            Material::diffuse(Color::WHITE).with_texture(
+                texture_id,
+                Vec2::new(1.0, 1.0),
+                WrapMode::Clamp,
+            )
+        } else {
+            Material::diffuse(Color::new(0.9, 0.1, 0.2))
+        };
+        let target_id = scene.add_material(target_material).unwrap();
+
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.65, -0.65, -2.5),
+                Vec3::new(0.65, 0.65, -1.5),
+                target_id,
+            ))
+            .unwrap();
+
+        scene
     }
 
     fn reflection_target_ray() -> Ray {
@@ -848,6 +1060,102 @@ mod tests {
     }
 
     #[test]
+    fn perpendicular_refraction_preserves_direction() {
+        let incident = Vec3::new(0.0, 0.0, -1.0);
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+
+        let refracted = refract(incident, normal, 1.0 / 1.5).unwrap();
+
+        assert_vec_near(refracted, incident);
+    }
+
+    #[test]
+    fn air_to_glass_refraction_produces_valid_direction() {
+        let incident = Vec3::new(0.5, 0.0, -1.0).normalized();
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+
+        let refracted = refract(incident, normal, 1.0 / 1.5).unwrap();
+
+        assert!(refracted.x.is_finite());
+        assert!(refracted.y.is_finite());
+        assert!(refracted.z.is_finite());
+        assert_near(refracted.length(), 1.0);
+    }
+
+    #[test]
+    fn glass_to_air_refraction_produces_valid_direction_when_angle_allows() {
+        let incident = Vec3::new(0.25, 0.0, -1.0).normalized();
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+
+        let refracted = refract(incident, normal, 1.5).unwrap();
+
+        assert!(refracted.x.is_finite());
+        assert!(refracted.y.is_finite());
+        assert!(refracted.z.is_finite());
+        assert_near(refracted.length(), 1.0);
+    }
+
+    #[test]
+    fn air_to_glass_bends_toward_normal() {
+        let incident = Vec3::new(1.0, 0.0, -1.0).normalized();
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+
+        let refracted = refract(incident, normal, 1.0 / 1.5).unwrap();
+
+        assert!(refracted.dot(-normal) > incident.dot(-normal));
+    }
+
+    #[test]
+    fn glass_to_air_bends_away_from_normal() {
+        let incident = Vec3::new(0.3, 0.0, -1.0).normalized();
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+
+        let refracted = refract(incident, normal, 1.5).unwrap();
+
+        assert!(refracted.dot(-normal) < incident.dot(-normal));
+    }
+
+    #[test]
+    fn total_internal_reflection_returns_none() {
+        let incident = Vec3::new(0.9, 0.0, -0.3).normalized();
+        let normal = Vec3::new(0.0, 0.0, 1.0);
+
+        assert_eq!(refract(incident, normal, 1.5), None);
+    }
+
+    #[test]
+    fn refracted_direction_is_normalized() {
+        let incident = Vec3::new(0.4, 0.0, -1.0);
+        let normal = Vec3::new(0.0, 0.0, 3.0);
+
+        let refracted = refract(incident, normal, 1.0 / 1.5).unwrap();
+
+        assert_near(refracted.length(), 1.0);
+    }
+
+    #[test]
+    fn invalid_refraction_inputs_return_none_without_nan() {
+        assert_eq!(
+            refract(
+                Vec3::new(f32::NAN, 0.0, -1.0),
+                Vec3::new(0.0, 0.0, 1.0),
+                1.0 / 1.5
+            ),
+            None
+        );
+        assert_eq!(refract(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0), 1.0), None);
+        assert_eq!(refract(Vec3::new(0.0, 0.0, -1.0), Vec3::ZERO, 1.0), None);
+        assert_eq!(
+            refract(
+                Vec3::new(0.0, 0.0, -1.0),
+                Vec3::new(0.0, 0.0, 1.0),
+                f32::INFINITY
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn reflectivity_zero_preserves_local_color_without_secondary_rays() {
         let scene = front_cube_scene(0.0);
         let ray = front_ray();
@@ -883,6 +1191,218 @@ mod tests {
         let color = trace_ray(&scene, &ray, 0);
 
         assert_color_near(color, expected);
+    }
+
+    #[test]
+    fn transparency_zero_preserves_previous_opaque_result() {
+        let scene = transparent_cube_scene(0.0, 0.0);
+        let ray = front_ray();
+        let local_color = Color::new(0.2, 0.4, 0.6);
+
+        reset_secondary_ray_count();
+        let color = trace_ray(&scene, &ray, 0);
+
+        assert_color_near(color, local_color);
+        assert_eq!(secondary_ray_count(), 0);
+    }
+
+    #[test]
+    fn transparency_one_uses_refracted_background() {
+        let scene = transparent_cube_scene(1.0, 0.0);
+        let ray = front_ray();
+        let expected_background = background_color(ray.direction);
+
+        let color = trace_ray(&scene, &ray, 0);
+
+        assert_color_near(color, expected_background);
+    }
+
+    #[test]
+    fn intermediate_transparency_blends_local_and_refracted_color() {
+        let scene = transparent_cube_scene(0.5, 0.0);
+        let ray = front_ray();
+        let local_color = Color::new(0.2, 0.4, 0.6);
+        let refracted_color = background_color(ray.direction);
+        let expected = local_color * 0.75 + refracted_color * 0.25;
+
+        let color = trace_ray(&scene, &ray, 0);
+
+        assert_color_near(color, expected);
+    }
+
+    #[test]
+    fn reflectivity_and_transparency_weights_are_non_negative() {
+        let weights = CompositionWeights::new(Material::new(
+            Color::WHITE,
+            0.0,
+            1.0,
+            0.35,
+            0.72,
+            1.5,
+            Color::BLACK,
+        ));
+
+        assert!(weights.local >= 0.0);
+        assert!(weights.reflection >= 0.0);
+        assert!(weights.refraction >= 0.0);
+    }
+
+    #[test]
+    fn composition_weights_sum_to_one() {
+        let weights = CompositionWeights::new(Material::new(
+            Color::WHITE,
+            0.0,
+            1.0,
+            0.35,
+            0.72,
+            1.5,
+            Color::BLACK,
+        ));
+
+        assert_near(weights.sum(), 1.0);
+    }
+
+    #[test]
+    fn refracted_ray_enters_and_exits_transparent_cube() {
+        let scene = transparent_cube_scene(1.0, 0.0);
+        let ray = front_ray();
+        let entry_hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+        let inside_ray = refracted_ray(
+            &ray,
+            entry_hit,
+            *scene.material(entry_hit.material_id).unwrap(),
+        )
+        .unwrap();
+        let exit_hit = scene.intersect(&inside_ray, RAY_EPSILON, 100.0).unwrap();
+
+        assert_eq!(entry_hit.normal, Vec3::new(0.0, 0.0, 1.0));
+        assert_eq!(exit_hit.normal, Vec3::new(0.0, 0.0, -1.0));
+        assert!(inside_ray.origin.z < entry_hit.position.z);
+    }
+
+    #[test]
+    fn exiting_face_uses_glass_to_air_eta_ratio() {
+        let scene = transparent_cube_scene(1.0, 0.0);
+        let material = *scene.material(0).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.25, 0.0, -1.0));
+        let exit_hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+        let outgoing = refracted_ray(&ray, exit_hit, material).unwrap();
+        let expected = refract(ray.direction, -exit_hit.normal, material.refractive_index).unwrap();
+
+        assert_eq!(exit_hit.normal, Vec3::new(0.0, 0.0, -1.0));
+        assert_vec_near(outgoing.direction, expected);
+    }
+
+    #[test]
+    fn refracted_origin_is_offset_into_destination_medium() {
+        let scene = transparent_cube_scene(1.0, 0.0);
+        let ray = front_ray();
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+        let refracted =
+            refracted_ray(&ray, hit, *scene.material(hit.material_id).unwrap()).unwrap();
+
+        assert!(refracted.origin.z < hit.position.z);
+        assert_color_near(
+            Color::new(hit.position.z - refracted.origin.z, 0.0, 0.0),
+            Color::new(RAY_EPSILON, 0.0, 0.0),
+        );
+        assert_ne!(
+            scene
+                .intersect(&refracted, RAY_EPSILON, 100.0)
+                .unwrap()
+                .normal,
+            hit.normal
+        );
+    }
+
+    #[test]
+    fn total_internal_reflection_uses_reflected_color_for_refraction_path() {
+        let scene = transparent_cube_scene(1.0, 0.0);
+        let material = *scene.material(0).unwrap();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.7, 0.0, -0.714));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+        let reflected = reflected_ray(&ray, hit).unwrap();
+        let reflected_color = trace_ray(&scene, &reflected, 1);
+        let refracted_color = trace_refraction(&scene, &ray, hit, material, 0).unwrap();
+
+        assert_eq!(refracted_ray(&ray, hit, material), None);
+        assert_color_near(refracted_color, reflected_color);
+    }
+
+    #[test]
+    fn background_is_visible_through_transparent_material() {
+        let scene = transparent_cube_scene(1.0, 0.0);
+        let ray = front_ray();
+
+        assert_color_near(trace_ray(&scene, &ray, 0), background_color(ray.direction));
+    }
+
+    #[test]
+    fn object_is_visible_through_transparent_cube() {
+        let scene = transparent_target_scene(false);
+
+        let color = trace_ray(&scene, &front_ray(), 0);
+
+        assert!(color.r > 0.8, "{color:?}");
+        assert!(color.g < 0.2, "{color:?}");
+        assert!(color.b < 0.3, "{color:?}");
+    }
+
+    #[test]
+    fn textured_object_remains_visible_through_transparent_cube() {
+        let scene = transparent_target_scene(true);
+
+        let color = trace_ray(&scene, &front_ray(), 0);
+
+        assert_color_near(color, Color::new(0.9, 0.1, 0.2));
+    }
+
+    #[test]
+    fn opaque_material_matches_local_shading_after_transparency_refactor() {
+        let scene = scene_with_main_cube();
+        let ray = front_ray();
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+        let local_color = shade_hit(&ray, hit, *scene.material(hit.material_id).unwrap(), &scene);
+
+        assert_color_near(trace_ray(&scene, &ray, 0), local_color);
+    }
+
+    #[test]
+    fn max_recursion_depth_stops_refraction_paths() {
+        let scene = transparent_cube_scene(1.0, 0.0);
+        let ray = front_ray();
+
+        reset_secondary_ray_count();
+        let color = trace_ray(&scene, &ray, MAX_RECURSION_DEPTH);
+
+        assert_color_near(color, Color::new(0.2, 0.4, 0.6));
+        assert_eq!(secondary_ray_count(), 0);
+    }
+
+    #[test]
+    fn overlapping_transparent_objects_do_not_recurse_forever() {
+        let mut scene = transparent_cube_scene(1.0, 0.0);
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.75, -0.75, -1.75),
+                Vec3::new(0.75, 0.75, 0.25),
+                0,
+            ))
+            .unwrap();
+
+        reset_secondary_ray_count();
+        let color = trace_ray(&scene, &front_ray(), 0);
+
+        assert_finite_unit_color(color);
+        assert!(secondary_ray_count() <= MAX_RECURSION_DEPTH as usize);
+    }
+
+    #[test]
+    fn transparent_result_contains_no_nan_or_infinity_and_stays_clamped() {
+        let scene = transparent_target_scene(true);
+        let color = trace_ray(&scene, &front_ray(), 0);
+
+        assert_finite_unit_color(color);
     }
 
     #[test]
