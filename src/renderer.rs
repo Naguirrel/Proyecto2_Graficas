@@ -765,6 +765,43 @@ mod tests {
     }
 
     #[test]
+    fn framebuffer_changes_after_orbit_zoom() {
+        let scene = sample_scene();
+        let mut first = Framebuffer::new(48, 36);
+        let mut second = Framebuffer::new(48, 36);
+        let aspect_ratio = first.width() as f32 / first.height() as f32;
+        let target = Vec3::new(0.0, -0.25, 0.0);
+        let first_camera = OrbitCamera::new(
+            target,
+            0.6,
+            0.4,
+            7.3,
+            55.0,
+            aspect_ratio,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .to_camera();
+        let second_camera = OrbitCamera::new(
+            target,
+            0.6,
+            0.4,
+            5.3,
+            55.0,
+            aspect_ratio,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .to_camera();
+
+        render_scene(&mut first, &first_camera, &scene);
+        render_scene(&mut second, &second_camera, &scene);
+
+        assert_eq!(first.width(), second.width());
+        assert_eq!(first.height(), second.height());
+        assert_eq!(first.pixels().len(), second.pixels().len());
+        assert_ne!(first.pixels(), second.pixels());
+    }
+
+    #[test]
     fn framebuffer_dimensions_survive_orbit_render() {
         let scene = sample_scene();
         let mut framebuffer = Framebuffer::new(48, 36);
