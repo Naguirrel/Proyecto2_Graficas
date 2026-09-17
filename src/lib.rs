@@ -4,6 +4,7 @@ pub mod color;
 pub mod cube;
 pub mod framebuffer;
 pub mod intersection;
+pub mod light;
 pub mod material;
 pub mod math;
 pub mod ray;

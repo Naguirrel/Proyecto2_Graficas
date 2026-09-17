@@ -1,19 +1,29 @@
-use crate::{cube::Cube, intersection::Intersection, material::Material, ray::Ray};
+use crate::{
+    color::Color, cube::Cube, intersection::Intersection, light::PointLight, material::Material,
+    ray::Ray,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneError {
     MissingMaterial { material_id: usize },
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Scene {
     cubes: Vec<Cube>,
     materials: Vec<Material>,
+    lights: Vec<PointLight>,
+    ambient_light: Color,
 }
 
 impl Scene {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            cubes: Vec::new(),
+            materials: Vec::new(),
+            lights: Vec::new(),
+            ambient_light: Color::new(0.08, 0.08, 0.08),
+        }
     }
 
     pub fn add_material(&mut self, material: Material) -> usize {
@@ -33,6 +43,10 @@ impl Scene {
         Ok(())
     }
 
+    pub fn add_light(&mut self, light: PointLight) {
+        self.lights.push(light);
+    }
+
     pub fn material(&self, material_id: usize) -> Option<&Material> {
         self.materials.get(material_id)
     }
@@ -43,6 +57,18 @@ impl Scene {
 
     pub fn materials(&self) -> &[Material] {
         &self.materials
+    }
+
+    pub fn lights(&self) -> &[PointLight] {
+        &self.lights
+    }
+
+    pub fn ambient_light(&self) -> Color {
+        self.ambient_light
+    }
+
+    pub fn set_ambient_light(&mut self, ambient_light: Color) {
+        self.ambient_light = ambient_light.clamped();
     }
 
     pub fn intersect(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<Intersection> {
@@ -63,7 +89,9 @@ impl Scene {
 #[cfg(test)]
 mod tests {
     use super::{Scene, SceneError};
-    use crate::{color::Color, cube::Cube, material::Material, math::Vec3, ray::Ray};
+    use crate::{
+        color::Color, cube::Cube, light::PointLight, material::Material, math::Vec3, ray::Ray,
+    };
 
     fn diffuse_scene() -> Scene {
         let mut scene = Scene::new();
@@ -77,6 +105,7 @@ mod tests {
 
         assert!(scene.cubes().is_empty());
         assert!(scene.materials().is_empty());
+        assert!(scene.lights().is_empty());
     }
 
     #[test]
@@ -101,6 +130,41 @@ mod tests {
     #[test]
     fn invalid_material_lookup_returns_none() {
         assert!(Scene::new().material(20).is_none());
+    }
+
+    #[test]
+    fn new_scene_has_no_lights() {
+        assert!(Scene::new().lights().is_empty());
+    }
+
+    #[test]
+    fn adding_lights_preserves_order() {
+        let mut scene = Scene::new();
+        let first = PointLight::new(Vec3::new(1.0, 0.0, 0.0), Color::WHITE, 1.0);
+        let second = PointLight::new(Vec3::new(2.0, 0.0, 0.0), Color::new(0.5, 0.5, 1.0), 2.0);
+
+        scene.add_light(first);
+        scene.add_light(second);
+
+        assert_eq!(scene.lights(), &[first, second]);
+    }
+
+    #[test]
+    fn ambient_light_can_be_configured_and_read() {
+        let mut scene = Scene::new();
+
+        scene.set_ambient_light(Color::new(0.2, 0.1, 0.05));
+
+        assert_eq!(scene.ambient_light(), Color::new(0.2, 0.1, 0.05));
+    }
+
+    #[test]
+    fn invalid_ambient_values_are_clamped_safely() {
+        let mut scene = Scene::new();
+
+        scene.set_ambient_light(Color::new(-1.0, f32::INFINITY, 2.0));
+
+        assert_eq!(scene.ambient_light(), Color::new(0.0, 0.0, 1.0));
     }
 
     #[test]
