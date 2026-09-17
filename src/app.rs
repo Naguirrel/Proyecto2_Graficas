@@ -8,7 +8,7 @@ const HEIGHT: usize = 600;
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
     let mut window = Window::new(
-        "Diorama Raytracing - Fundamentos",
+        "Diorama Raytracing - Cubos",
         WIDTH,
         HEIGHT,
         WindowOptions {
