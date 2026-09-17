@@ -12,14 +12,25 @@ use crate::{
     texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
 };
 
+#[cfg(test)]
+use std::cell::Cell;
+
 const HIT_T_MIN: f32 = 0.001;
 const HIT_T_MAX: f32 = 1_000.0;
-const SHADOW_EPSILON: f32 = 0.001;
+pub(crate) const MAX_RECURSION_DEPTH: u32 = 4;
+const RAY_EPSILON: f32 = 0.001;
+const SHADOW_EPSILON: f32 = RAY_EPSILON;
+const MIN_REFLECTIVITY: f32 = 0.0001;
 const SEAT_FABRIC_TEXTURE_PATH: &str = "assets/textures/seat_fabric.ppm";
 const THEATER_CARPET_TEXTURE_PATH: &str = "assets/textures/theater_carpet.ppm";
 const BRUSHED_METAL_TEXTURE_PATH: &str = "assets/textures/brushed_metal.ppm";
 const TRANSPARENT_PLASTIC_TEXTURE_PATH: &str = "assets/textures/transparent_plastic.ppm";
 const POPCORN_CARDBOARD_TEXTURE_PATH: &str = "assets/textures/popcorn_cardboard.ppm";
+
+#[cfg(test)]
+thread_local! {
+    static SECONDARY_RAY_COUNT: Cell<usize> = const { Cell::new(0) };
+}
 
 pub fn render_background(framebuffer: &mut Framebuffer) {
     let aspect_ratio = framebuffer.width() as f32 / framebuffer.height().max(1) as f32;
@@ -41,7 +52,7 @@ pub fn render_scene(framebuffer: &mut Framebuffer, camera: &Camera, scene: &Scen
     for y in 0..framebuffer.height() {
         for x in 0..framebuffer.width() {
             let ray = camera.ray_for_pixel(x, y, framebuffer.width(), framebuffer.height());
-            let color = trace_primary_ray_with_material_textures(&ray, scene);
+            let color = trace_ray(scene, &ray, 0);
 
             framebuffer.set_pixel(x, y, color);
         }
@@ -197,19 +208,94 @@ fn fallback_texture() -> Texture {
 
 #[cfg(test)]
 pub(crate) fn trace_primary_ray(ray: &Ray, scene: &Scene) -> Color {
-    trace_primary_ray_with_material_textures(ray, scene)
+    trace_ray(scene, ray, 0)
 }
 
-pub(crate) fn trace_primary_ray_with_material_textures(ray: &Ray, scene: &Scene) -> Color {
-    match scene.intersect(ray, HIT_T_MIN, HIT_T_MAX) {
-        Some(hit) => {
-            let material = scene.material(hit.material_id).copied().unwrap_or_default();
-            let surface_albedo = material.albedo * material_texel(scene, material, hit.uv);
+pub(crate) fn trace_ray(scene: &Scene, ray: &Ray, depth: u32) -> Color {
+    let Some(hit) = find_nearest_hit(scene, ray) else {
+        return background_color(ray.direction);
+    };
+    let material = resolve_material(scene, hit.material_id);
+    let surface_albedo = resolve_surface_albedo(scene, material, hit.uv);
+    let local_color = shade_hit_with_albedo(ray, hit, material, surface_albedo, scene);
 
-            shade_hit_with_albedo(ray, hit, material, surface_albedo, scene)
-        }
-        None => background_color(ray.direction),
+    match trace_reflection(scene, ray, hit, material, depth) {
+        Some(reflected_color) => (local_color * (1.0 - material.reflectivity)
+            + reflected_color * material.reflectivity)
+            .clamped(),
+        None => local_color,
     }
+}
+
+fn find_nearest_hit(scene: &Scene, ray: &Ray) -> Option<Intersection> {
+    scene.intersect(ray, HIT_T_MIN, HIT_T_MAX)
+}
+
+fn resolve_material(scene: &Scene, material_id: usize) -> Material {
+    scene.material(material_id).copied().unwrap_or_default()
+}
+
+fn resolve_surface_albedo(scene: &Scene, material: Material, uv: Vec2) -> Color {
+    material.albedo * material_texel(scene, material, uv)
+}
+
+fn trace_reflection(
+    scene: &Scene,
+    ray: &Ray,
+    hit: Intersection,
+    material: Material,
+    depth: u32,
+) -> Option<Color> {
+    if material.reflectivity <= MIN_REFLECTIVITY {
+        return None;
+    }
+
+    // At the recursion limit, the stable fallback is the already-computed local
+    // Phong color; no secondary ray is launched from this hit.
+    if depth >= MAX_RECURSION_DEPTH {
+        return None;
+    }
+
+    let reflected_ray = reflected_ray(ray, hit)?;
+
+    record_secondary_ray();
+    Some(trace_ray(scene, &reflected_ray, depth + 1))
+}
+
+fn reflected_ray(ray: &Ray, hit: Intersection) -> Option<Ray> {
+    let incident_direction = ray.direction.normalized();
+    let reflected_direction = incident_direction.reflect(hit.normal).normalized();
+
+    if reflected_direction == Vec3::ZERO {
+        return None;
+    }
+
+    let offset_direction = if reflected_direction.dot(hit.normal) >= 0.0 {
+        hit.normal
+    } else {
+        -hit.normal
+    };
+    let reflected_origin = hit.position + offset_direction * RAY_EPSILON;
+
+    Some(Ray::new(reflected_origin, reflected_direction))
+}
+
+#[cfg(test)]
+fn record_secondary_ray() {
+    SECONDARY_RAY_COUNT.with(|count| count.set(count.get() + 1));
+}
+
+#[cfg(not(test))]
+fn record_secondary_ray() {}
+
+#[cfg(test)]
+fn reset_secondary_ray_count() {
+    SECONDARY_RAY_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn secondary_ray_count() -> usize {
+    SECONDARY_RAY_COUNT.with(Cell::get)
 }
 
 pub(crate) fn material_texel(scene: &Scene, material: Material, uv: Vec2) -> Color {
@@ -321,8 +407,9 @@ pub(crate) fn background_color(direction: Vec3) -> Color {
 #[cfg(test)]
 mod tests {
     use super::{
-        background_color, is_light_visible, material_texel, render_background, render_scene,
-        sample_scene, shade_hit, shade_hit_with_albedo, trace_primary_ray,
+        MAX_RECURSION_DEPTH, RAY_EPSILON, background_color, is_light_visible, material_texel,
+        reflected_ray, render_background, render_scene, reset_secondary_ray_count, sample_scene,
+        secondary_ray_count, shade_hit, shade_hit_with_albedo, trace_primary_ray, trace_ray,
     };
     use crate::{
         camera::{Camera, OrbitCamera},
@@ -393,6 +480,143 @@ mod tests {
             Vec3::new(0.25, 0.25, 2.0),
             material_id,
         )
+    }
+
+    fn assert_color_near(left: Color, right: Color) {
+        assert!(
+            (left.r - right.r).abs() < 0.0001
+                && (left.g - right.g).abs() < 0.0001
+                && (left.b - right.b).abs() < 0.0001,
+            "{left:?} != {right:?}"
+        );
+    }
+
+    fn assert_finite_unit_color(color: Color) {
+        assert!(color.r.is_finite());
+        assert!(color.g.is_finite());
+        assert!(color.b.is_finite());
+        assert!((0.0..=1.0).contains(&color.r));
+        assert!((0.0..=1.0).contains(&color.g));
+        assert!((0.0..=1.0).contains(&color.b));
+    }
+
+    fn reflective_material(reflectivity: f32) -> Material {
+        Material::new(
+            Color::new(0.2, 0.4, 0.6),
+            0.0,
+            1.0,
+            reflectivity,
+            0.0,
+            1.0,
+            Color::BLACK,
+        )
+    }
+
+    fn front_cube_scene(reflectivity: f32) -> Scene {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let material_id = scene
+            .add_material(reflective_material(reflectivity))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                material_id,
+            ))
+            .unwrap();
+        scene
+    }
+
+    fn front_ray() -> Ray {
+        Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0))
+    }
+
+    fn reflection_target_ray() -> Ray {
+        Ray::new(Vec3::new(0.0, 3.0, 3.0), Vec3::new(0.0, -2.0, -3.0))
+    }
+
+    fn reflection_target_scene(reflectivity: f32, textured_target: bool) -> Scene {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let mirror_id = scene
+            .add_material(Material::new(
+                Color::BLACK,
+                0.0,
+                1.0,
+                reflectivity,
+                0.0,
+                1.0,
+                Color::BLACK,
+            ))
+            .unwrap();
+        let target_material = if textured_target {
+            let texture_id =
+                scene.add_texture(Texture::new(1, 1, vec![Color::new(0.9, 0.1, 0.2)]).unwrap());
+
+            Material::diffuse(Color::WHITE).with_texture(
+                texture_id,
+                Vec2::new(1.0, 1.0),
+                WrapMode::Clamp,
+            )
+        } else {
+            Material::diffuse(Color::new(0.9, 0.1, 0.2))
+        };
+        let target_id = scene.add_material(target_material).unwrap();
+
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.55, 0.0, -0.55),
+                Vec3::new(0.55, 1.0, 0.55),
+                mirror_id,
+            ))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.55, 1.25, -1.5),
+                Vec3::new(0.55, 2.3, -0.7),
+                target_id,
+            ))
+            .unwrap();
+
+        scene
+    }
+
+    fn facing_mirrors_scene() -> Scene {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::BLACK);
+        let material_id = scene
+            .add_material(Material::new(
+                Color::new(0.1, 0.1, 0.1),
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                1.0,
+                Color::BLACK,
+            ))
+            .unwrap();
+
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -3.0),
+                Vec3::new(1.0, 1.0, -2.0),
+                material_id,
+            ))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, 2.0),
+                Vec3::new(1.0, 1.0, 3.0),
+                material_id,
+            ))
+            .unwrap();
+
+        scene
+    }
+
+    fn red_channel(pixel: u32) -> u8 {
+        ((pixel >> 16) & 0xff) as u8
     }
 
     #[test]
@@ -607,6 +831,203 @@ mod tests {
             trace_primary_ray(&ray, &scene).to_u32(),
             background_color(ray.direction).to_u32()
         );
+    }
+
+    #[test]
+    fn vec3_reflect_matches_trace_ray_convention() {
+        let incident = Vec3::new(1.0, -1.0, 0.0).normalized();
+        let normal = Vec3::new(0.0, 1.0, 0.0);
+        let formula = incident - normal * (2.0 * incident.dot(normal));
+
+        assert!(incident.reflect(normal).approx_eq(formula));
+        assert!(
+            incident
+                .reflect(normal)
+                .approx_eq(Vec3::new(1.0, 1.0, 0.0).normalized())
+        );
+    }
+
+    #[test]
+    fn reflectivity_zero_preserves_local_color_without_secondary_rays() {
+        let scene = front_cube_scene(0.0);
+        let ray = front_ray();
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+        let local_color = shade_hit(&ray, hit, *scene.material(hit.material_id).unwrap(), &scene);
+
+        reset_secondary_ray_count();
+        let color = trace_ray(&scene, &ray, 0);
+
+        assert_color_near(color, local_color);
+        assert_eq!(secondary_ray_count(), 0);
+    }
+
+    #[test]
+    fn reflectivity_one_uses_reflected_background_when_ray_misses() {
+        let scene = front_cube_scene(1.0);
+        let ray = front_ray();
+        let expected_background = background_color(Vec3::new(0.0, 0.0, 1.0));
+
+        let color = trace_ray(&scene, &ray, 0);
+
+        assert_color_near(color, expected_background);
+    }
+
+    #[test]
+    fn intermediate_reflectivity_blends_local_and_reflected_color() {
+        let scene = front_cube_scene(0.25);
+        let ray = front_ray();
+        let local_color = Color::new(0.2, 0.4, 0.6);
+        let reflected_color = background_color(Vec3::new(0.0, 0.0, 1.0));
+        let expected = local_color * 0.75 + reflected_color * 0.25;
+
+        let color = trace_ray(&scene, &ray, 0);
+
+        assert_color_near(color, expected);
+    }
+
+    #[test]
+    fn reflected_ray_can_hit_another_object() {
+        let scene = reflection_target_scene(1.0, false);
+        let color = trace_ray(&scene, &reflection_target_ray(), 0);
+
+        assert!(color.r > 0.8, "{color:?}");
+        assert!(color.g < 0.2, "{color:?}");
+        assert!(color.b < 0.3, "{color:?}");
+    }
+
+    #[test]
+    fn reflected_object_keeps_its_texture() {
+        let scene = reflection_target_scene(1.0, true);
+        let color = trace_ray(&scene, &reflection_target_ray(), 0);
+
+        assert_color_near(color, Color::new(0.9, 0.1, 0.2));
+    }
+
+    #[test]
+    fn reflected_origin_is_offset_away_from_hit_surface() {
+        let scene = front_cube_scene(1.0);
+        let ray = front_ray();
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+        let reflected = reflected_ray(&ray, hit).unwrap();
+
+        assert!(reflected.origin.z > hit.position.z);
+        assert_color_near(
+            Color::new(reflected.origin.z - hit.position.z, 0.0, 0.0),
+            Color::new(RAY_EPSILON, 0.0, 0.0),
+        );
+        assert!(scene.intersect(&reflected, RAY_EPSILON, 100.0).is_none());
+    }
+
+    #[test]
+    fn different_view_angles_generate_different_reflection_directions() {
+        let hit = flat_hit();
+        let straight = reflected_ray(&view_ray(), hit).unwrap();
+        let angled = reflected_ray(
+            &Ray::new(Vec3::new(1.0, 0.0, 4.0), Vec3::new(-0.25, 0.0, -1.0)),
+            hit,
+        )
+        .unwrap();
+
+        assert_ne!(straight.direction, angled.direction);
+    }
+
+    #[test]
+    fn max_recursion_depth_returns_stable_local_color() {
+        let scene = front_cube_scene(1.0);
+        let ray = front_ray();
+
+        reset_secondary_ray_count();
+        let color = trace_ray(&scene, &ray, MAX_RECURSION_DEPTH);
+
+        assert_color_near(color, Color::new(0.2, 0.4, 0.6));
+        assert_eq!(secondary_ray_count(), 0);
+    }
+
+    #[test]
+    fn facing_reflective_surfaces_stop_at_recursion_limit() {
+        let scene = facing_mirrors_scene();
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, 1.0));
+
+        reset_secondary_ray_count();
+        let color = trace_ray(&scene, &ray, 0);
+
+        assert_finite_unit_color(color);
+        assert!(secondary_ray_count() <= MAX_RECURSION_DEPTH as usize);
+    }
+
+    #[test]
+    fn reflected_result_contains_no_nan_or_infinity_and_stays_clamped() {
+        let scene = reflection_target_scene(0.6, true);
+        let color = trace_ray(&scene, &reflection_target_ray(), 0);
+
+        assert_finite_unit_color(color);
+    }
+
+    #[test]
+    fn trace_ray_preserves_emission_in_local_shading() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::BLACK);
+        let material_id = scene
+            .add_material(Material::new(
+                Color::BLACK,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                Color::new(0.2, 0.3, 0.4),
+            ))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                material_id,
+            ))
+            .unwrap();
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.2, 0.3, 0.4),
+        );
+    }
+
+    #[test]
+    fn trace_ray_keeps_shadowed_local_shading() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::BLACK);
+        let surface_id = scene
+            .add_material(Material::new(
+                Color::WHITE,
+                0.0,
+                1.0,
+                0.0,
+                0.0,
+                1.0,
+                Color::BLACK,
+            ))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                surface_id,
+            ))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(0.2, -0.2, 1.7),
+                Vec3::new(0.45, 0.2, 2.1),
+                surface_id,
+            ))
+            .unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.6, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_color_near(trace_ray(&scene, &front_ray(), 0), Color::BLACK);
     }
 
     #[test]
@@ -1087,6 +1508,29 @@ mod tests {
         assert_ne!(first, second);
         assert_ne!(first, third);
         assert_ne!(second, fourth);
+    }
+
+    #[test]
+    fn small_framebuffer_contains_detectable_reflection() {
+        let reflective_scene = reflection_target_scene(1.0, true);
+        let matte_scene = reflection_target_scene(0.0, true);
+        let camera = Camera::new(
+            Vec3::new(0.0, 3.0, 3.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            45.0,
+            1.0,
+        );
+        let mut reflective = Framebuffer::new(1, 1);
+        let mut matte = Framebuffer::new(1, 1);
+
+        render_scene(&mut reflective, &camera, &reflective_scene);
+        render_scene(&mut matte, &camera, &matte_scene);
+
+        assert_eq!(reflective.width(), 1);
+        assert_eq!(reflective.height(), 1);
+        assert_eq!(reflective.pixels().len(), 1);
+        assert!(red_channel(reflective.pixels()[0]) > red_channel(matte.pixels()[0]));
     }
 
     #[test]
