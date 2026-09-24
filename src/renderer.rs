@@ -1,7 +1,7 @@
 use crate::{
     camera::Camera,
+    cinema,
     color::Color,
-    cube::Cube,
     framebuffer::Framebuffer,
     intersection::Intersection,
     light::PointLight,
@@ -9,8 +9,7 @@ use crate::{
     math::{Vec2, Vec3},
     ray::Ray,
     scene::Scene,
-    skybox::Skybox,
-    texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
+    texture::FALLBACK_TEXTURE_COLOR,
 };
 
 #[cfg(test)]
@@ -23,13 +22,6 @@ const RAY_EPSILON: f32 = 0.001;
 const SHADOW_EPSILON: f32 = RAY_EPSILON;
 const MIN_REFLECTIVITY: f32 = 0.0001;
 const MIN_TRANSPARENCY: f32 = 0.0001;
-const SEAT_FABRIC_TEXTURE_PATH: &str = "assets/textures/seat_fabric.ppm";
-const THEATER_CARPET_TEXTURE_PATH: &str = "assets/textures/theater_carpet.ppm";
-const BRUSHED_METAL_TEXTURE_PATH: &str = "assets/textures/brushed_metal.ppm";
-const TRANSPARENT_PLASTIC_TEXTURE_PATH: &str = "assets/textures/transparent_plastic.ppm";
-const POPCORN_CARDBOARD_TEXTURE_PATH: &str = "assets/textures/popcorn_cardboard.ppm";
-const NIGHT_CINEMA_SKYBOX_TEXTURE_PATH: &str = "assets/textures/night_cinema_skybox.ppm";
-
 #[cfg(test)]
 thread_local! {
     static SECONDARY_RAY_COUNT: Cell<usize> = const { Cell::new(0) };
@@ -38,8 +30,8 @@ thread_local! {
 pub fn render_background(framebuffer: &mut Framebuffer) {
     let aspect_ratio = framebuffer.width() as f32 / framebuffer.height().max(1) as f32;
     let camera = Camera::new(
-        Vec3::new(3.8, 2.6, 5.5),
-        Vec3::new(0.0, -0.25, 0.0),
+        Vec3::new(0.0, 3.30, 6.78),
+        Vec3::new(0.0, 0.70, -3.40),
         Vec3::new(0.0, 1.0, 0.0),
         55.0,
         aspect_ratio,
@@ -63,158 +55,10 @@ pub fn render_scene(framebuffer: &mut Framebuffer, camera: &Camera, scene: &Scen
 }
 
 pub(crate) fn sample_scene() -> Scene {
-    let mut scene = Scene::new();
-    scene.set_ambient_light(Color::new(0.07, 0.065, 0.08));
-    let seat_texture = scene.add_texture(load_scene_texture(SEAT_FABRIC_TEXTURE_PATH));
-    let carpet_texture = scene.add_texture(load_scene_texture(THEATER_CARPET_TEXTURE_PATH));
-    let metal_texture = scene.add_texture(load_scene_texture(BRUSHED_METAL_TEXTURE_PATH));
-    let plastic_texture = scene.add_texture(load_scene_texture(TRANSPARENT_PLASTIC_TEXTURE_PATH));
-    let cardboard_texture = scene.add_texture(load_scene_texture(POPCORN_CARDBOARD_TEXTURE_PATH));
-    scene.set_skybox(load_scene_skybox(NIGHT_CINEMA_SKYBOX_TEXTURE_PATH));
-
-    let seat_fabric = scene
-        .add_material(
-            Material::new(
-                Color::new(0.78, 0.34, 0.34),
-                0.22,
-                18.0,
-                0.03,
-                0.0,
-                1.0,
-                Color::BLACK,
-            )
-            .with_texture(seat_texture, Vec2::new(3.0, 2.0), WrapMode::Repeat),
-        )
-        .expect("seat texture was registered before the material");
-    let theater_carpet = scene
-        .add_material(
-            Material::new(
-                Color::new(0.42, 0.32, 0.56),
-                0.08,
-                8.0,
-                0.01,
-                0.0,
-                1.0,
-                Color::BLACK,
-            )
-            .with_texture(carpet_texture, Vec2::new(5.0, 4.0), WrapMode::Repeat),
-        )
-        .expect("carpet texture was registered before the material");
-    let brushed_metal = scene
-        .add_material(
-            Material::new(
-                Color::new(0.76, 0.76, 0.78),
-                0.9,
-                96.0,
-                0.78,
-                0.0,
-                1.0,
-                Color::BLACK,
-            )
-            .with_texture(metal_texture, Vec2::new(2.0, 1.0), WrapMode::Clamp),
-        )
-        .expect("metal texture was registered before the material");
-    let transparent_plastic = scene
-        .add_material(
-            Material::new(
-                Color::new(0.72, 0.88, 1.0),
-                0.55,
-                64.0,
-                0.35,
-                0.72,
-                1.49,
-                Color::BLACK,
-            )
-            .with_texture(plastic_texture, Vec2::new(1.5, 1.5), WrapMode::Clamp),
-        )
-        .expect("plastic texture was registered before the material");
-    let popcorn_cardboard = scene
-        .add_material(
-            Material::new(
-                Color::new(1.0, 0.92, 0.72),
-                0.18,
-                14.0,
-                0.02,
-                0.0,
-                1.0,
-                Color::new(0.02, 0.015, 0.005),
-            )
-            .with_texture(cardboard_texture, Vec2::new(2.0, 2.0), WrapMode::Repeat),
-        )
-        .expect("cardboard texture was registered before the material");
-
-    scene
-        .add_cube(Cube::new(
-            Vec3::new(-4.0, -1.15, -4.0),
-            Vec3::new(4.0, -1.05, 3.0),
-            theater_carpet,
-        ))
-        .expect("sample floor uses a registered material");
-    scene
-        .add_cube(Cube::new(
-            Vec3::new(-3.0, -1.0, -0.9),
-            Vec3::new(-2.0, 0.25, 0.35),
-            seat_fabric,
-        ))
-        .expect("seat sample cube uses a registered material");
-    scene
-        .add_cube(Cube::new(
-            Vec3::new(-1.45, -1.0, -1.15),
-            Vec3::new(-0.45, -0.15, -0.15),
-            theater_carpet,
-        ))
-        .expect("carpet sample cube uses a registered material");
-    scene
-        .add_cube(Cube::new(
-            Vec3::new(0.0, -1.0, -0.8),
-            Vec3::new(0.85, 0.35, 0.05),
-            brushed_metal,
-        ))
-        .expect("metal sample cube uses a registered material");
-    scene
-        .add_cube(Cube::new(
-            Vec3::new(1.95, -1.0, 0.2),
-            Vec3::new(2.75, 0.18, 0.95),
-            transparent_plastic,
-        ))
-        .expect("plastic sample cube uses a registered material");
-    scene
-        .add_cube(Cube::new(
-            Vec3::new(2.35, -1.0, -0.65),
-            Vec3::new(3.1, 0.55, 0.15),
-            popcorn_cardboard,
-        ))
-        .expect("cardboard sample cube uses a registered material");
-    scene.add_light(PointLight::new(
-        Vec3::new(-2.7, 4.6, 2.8),
-        Color::new(1.0, 0.82, 0.58),
-        28.0,
-    ));
-    scene.add_light(PointLight::new(
-        Vec3::new(3.5, 2.4, 4.0),
-        Color::new(0.45, 0.62, 1.0),
-        5.0,
-    ));
-
-    scene
-}
-
-fn load_scene_texture(path: &str) -> Texture {
-    Texture::from_ppm_file(path).unwrap_or_else(|error| {
-        eprintln!("No se pudo cargar {path}: {error:?}. Usando fallback magenta.");
-        fallback_texture()
+    cinema::build_cinema_scene().unwrap_or_else(|error| {
+        eprintln!("No se pudo construir la sala de cine: {error}");
+        Scene::new()
     })
-}
-
-fn fallback_texture() -> Texture {
-    Texture::new(1, 1, vec![FALLBACK_TEXTURE_COLOR]).expect("fallback texture is valid")
-}
-
-fn load_scene_skybox(path: &str) -> Skybox {
-    Skybox::from_ppm_file(path)
-        .unwrap_or_else(|_| Skybox::new(fallback_texture()))
-        .with_intensity(1.15)
-        .with_horizontal_rotation(0.08)
 }
 
 #[cfg(test)]
@@ -1707,10 +1551,10 @@ mod tests {
 
         assert_eq!(scene.textures().len(), 5);
         assert!(scene.skybox().is_some());
-        assert_eq!(materials.len(), 5);
+        assert!(materials.len() >= 5);
         let mut texture_ids = materials
             .iter()
-            .map(|material| material.texture_id.unwrap())
+            .filter_map(|material| material.texture_id)
             .collect::<Vec<_>>();
         texture_ids.sort_unstable();
         texture_ids.dedup();
