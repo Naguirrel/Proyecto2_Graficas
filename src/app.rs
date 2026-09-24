@@ -3,6 +3,7 @@ use std::time::Instant;
 
 use crate::{
     camera::{CameraInput, OrbitCamera},
+    cinema,
     framebuffer::Framebuffer,
     math::Vec3,
     renderer,
@@ -10,10 +11,10 @@ use crate::{
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
-const INITIAL_CAMERA_TARGET: Vec3 = Vec3::new(0.0, -0.25, 0.0);
-const INITIAL_CAMERA_YAW: f32 = 0.60;
-const INITIAL_CAMERA_PITCH: f32 = 0.40;
-const INITIAL_CAMERA_DISTANCE: f32 = 7.30;
+const INITIAL_CAMERA_TARGET: Vec3 = Vec3::new(0.0, 0.70, -3.40);
+const INITIAL_CAMERA_YAW: f32 = 0.0;
+const INITIAL_CAMERA_PITCH: f32 = 0.25;
+const INITIAL_CAMERA_DISTANCE: f32 = 10.50;
 const INITIAL_CAMERA_FOV_DEGREES: f32 = 55.0;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,9 +29,9 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         aspect_ratio,
         Vec3::new(0.0, 1.0, 0.0),
     );
-    let scene = renderer::sample_scene();
+    let scene = cinema::build_cinema_scene()?;
     let mut window = Window::new(
-        "Diorama Raytracing - Reflexion, refraccion y skybox",
+        "Diorama Raytracing - Sala de cine",
         WIDTH,
         HEIGHT,
         WindowOptions {

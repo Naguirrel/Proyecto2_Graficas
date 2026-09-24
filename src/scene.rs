@@ -21,14 +21,7 @@ pub struct Scene {
 
 impl Scene {
     pub fn new() -> Self {
-        Self {
-            cubes: Vec::new(),
-            materials: Vec::new(),
-            textures: Vec::new(),
-            lights: Vec::new(),
-            ambient_light: Color::new(0.08, 0.08, 0.08),
-            skybox: None,
-        }
+        Self::default()
     }
 
     pub fn add_texture(&mut self, texture: Texture) -> usize {
@@ -38,10 +31,10 @@ impl Scene {
     }
 
     pub fn add_material(&mut self, material: Material) -> Result<usize, SceneError> {
-        if let Some(texture_id) = material.texture_id {
-            if self.texture(texture_id).is_none() {
-                return Err(SceneError::MissingTexture { texture_id });
-            }
+        if let Some(texture_id) = material.texture_id
+            && self.texture(texture_id).is_none()
+        {
+            return Err(SceneError::MissingTexture { texture_id });
         }
 
         let material_id = self.materials.len();
@@ -119,6 +112,19 @@ impl Scene {
     }
 }
 
+impl Default for Scene {
+    fn default() -> Self {
+        Self {
+            cubes: Vec::new(),
+            materials: Vec::new(),
+            textures: Vec::new(),
+            lights: Vec::new(),
+            ambient_light: Color::new(0.08, 0.08, 0.08),
+            skybox: None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Scene, SceneError};
@@ -152,6 +158,19 @@ mod tests {
         assert!(scene.textures().is_empty());
         assert!(scene.lights().is_empty());
         assert!(scene.skybox().is_none());
+    }
+
+    #[test]
+    fn default_scene_matches_new_scene_state() {
+        let new_scene = Scene::new();
+        let default_scene = Scene::default();
+
+        assert_eq!(default_scene.cubes(), new_scene.cubes());
+        assert_eq!(default_scene.materials(), new_scene.materials());
+        assert_eq!(default_scene.textures(), new_scene.textures());
+        assert_eq!(default_scene.lights(), new_scene.lights());
+        assert_eq!(default_scene.ambient_light(), new_scene.ambient_light());
+        assert_eq!(default_scene.skybox(), new_scene.skybox());
     }
 
     #[test]

@@ -1,5 +1,6 @@
 pub mod app;
 pub mod camera;
+pub mod cinema;
 pub mod color;
 pub mod cube;
 pub mod framebuffer;
