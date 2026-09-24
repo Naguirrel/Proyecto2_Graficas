@@ -29,7 +29,33 @@ const SCREEN_WIDTH: f32 = 5.8;
 const SCREEN_HEIGHT: f32 = 2.65;
 const SCREEN_BOTTOM_Y: f32 = -0.05;
 const STEP_COUNT: usize = 6;
+const AISLE_HALF_WIDTH: f32 = 0.55;
+const STEP_Z_START: f32 = -3.95;
+const STEP_DEPTH: f32 = 0.92;
+const STEP_TOP_OFFSET: f32 = 0.10;
+const STEP_HEIGHT_RISE: f32 = 0.18;
 const ACOUSTIC_PANEL_COLUMNS: usize = 5;
+const SEAT_ROW_COUNT: usize = 4;
+const SEAT_BLOCK_COUNT: usize = 2;
+const SEATS_PER_BLOCK: usize = 3;
+#[cfg(test)]
+const SEATS_PER_ROW: usize = SEATS_PER_BLOCK * SEAT_BLOCK_COUNT;
+#[cfg(test)]
+const TOTAL_SEATS: usize = SEAT_ROW_COUNT * SEATS_PER_ROW;
+const SEAT_ROW_SPACING: f32 = 1.12;
+const SEAT_HORIZONTAL_SPACING: f32 = 0.78;
+const SEAT_BLOCK_FIRST_CENTER_X: f32 = 1.52;
+const SEAT_WIDTH: f32 = 0.56;
+const SEAT_CUSHION_DEPTH: f32 = 0.48;
+const SEAT_CUSHION_THICKNESS: f32 = 0.16;
+const SEAT_BACK_THICKNESS: f32 = 0.14;
+const SEAT_BACK_HEIGHT: f32 = 0.76;
+const SEAT_ARM_WIDTH: f32 = 0.08;
+const SEAT_ARM_HEIGHT: f32 = 0.32;
+const SEAT_ARM_DEPTH: f32 = 0.56;
+const SEAT_PLATFORM_CLEARANCE: f32 = 0.03;
+const SEAT_FRONT_OFFSET: f32 = 0.18;
+const SEAT_BACK_GAP: f32 = 0.02;
 
 const SEAT_FABRIC_TEXTURE_PATH: &str = "assets/textures/seat_fabric.ppm";
 const THEATER_CARPET_TEXTURE_PATH: &str = "assets/textures/theater_carpet.ppm";
@@ -100,13 +126,68 @@ pub(crate) enum CinemaElement {
     Door,
     ExitSign,
     AcousticPanel,
+    SeatCushion,
+    SeatBack,
+    SeatArm,
     Opening,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SeatBlock {
+    Left,
+    Right,
+}
+
+impl SeatBlock {
+    const ALL: [Self; SEAT_BLOCK_COUNT] = [Self::Left, Self::Right];
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct SeatRowMetadata {
+    row: usize,
+    platform_y: f32,
+    z_start: f32,
+    seat_count: usize,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy)]
+struct SeatMetadata {
+    row: usize,
+    column: usize,
+    block: SeatBlock,
+    cushion_id: usize,
+    back_id: usize,
+    left_arm_id: usize,
+    right_arm_id: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SeatPlacement {
+    #[cfg(test)]
+    row: usize,
+    #[cfg(test)]
+    column: usize,
+    #[cfg(test)]
+    block: SeatBlock,
+    center_x: f32,
+    platform_y: f32,
+    z_start: f32,
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct CinemaBuildMetadata {
     elements: Vec<(CinemaElement, usize)>,
+    #[cfg(test)]
+    seat_rows: Vec<SeatRowMetadata>,
+    #[cfg(test)]
+    seats: Vec<SeatMetadata>,
     textured_material_count: usize,
+    #[cfg(test)]
+    seat_fabric_material_id: Option<usize>,
+    #[cfg(test)]
+    brushed_metal_material_id: Option<usize>,
 }
 
 #[cfg(test)]
@@ -127,6 +208,41 @@ impl CinemaBuildMetadata {
 
     pub(crate) fn textured_material_count(&self) -> usize {
         self.textured_material_count
+    }
+
+    fn seat_rows(&self) -> &[SeatRowMetadata] {
+        &self.seat_rows
+    }
+
+    fn seats(&self) -> &[SeatMetadata] {
+        &self.seats
+    }
+
+    fn seat_fabric_material_id(&self) -> Option<usize> {
+        self.seat_fabric_material_id
+    }
+
+    fn brushed_metal_material_id(&self) -> Option<usize> {
+        self.brushed_metal_material_id
+    }
+}
+
+#[cfg(test)]
+impl SeatMetadata {
+    fn cube_ids(self) -> [usize; 4] {
+        [
+            self.cushion_id,
+            self.back_id,
+            self.left_arm_id,
+            self.right_arm_id,
+        ]
+    }
+}
+
+#[cfg(test)]
+impl SeatRowMetadata {
+    fn rear_z(self) -> f32 {
+        self.z_start + STEP_DEPTH
     }
 }
 
@@ -153,6 +269,7 @@ fn build_cinema_scene_internal() -> Result<(Scene, CinemaBuildMetadata), CinemaB
     add_side_walls_and_panels(&mut scene, &mut metadata, materials)?;
     add_partial_ceiling(&mut scene, &mut metadata, materials)?;
     add_aisle_and_steps(&mut scene, &mut metadata, materials)?;
+    add_seating(&mut scene, &mut metadata, materials)?;
     add_exit(&mut scene, &mut metadata, materials)?;
     add_lights(&mut scene);
 
@@ -276,6 +393,12 @@ fn register_materials(
         1.0,
         Color::new(0.0, 0.55, 0.18),
     ))?;
+
+    #[cfg(test)]
+    {
+        metadata.seat_fabric_material_id = Some(seat_fabric);
+        metadata.brushed_metal_material_id = Some(brushed_metal);
+    }
 
     Ok(CinemaMaterials {
         seat_fabric,
@@ -456,15 +579,15 @@ fn add_aisle_and_steps(
         scene,
         metadata,
         CinemaElement::Aisle,
-        Vec3::new(-0.55, FLOOR_Y + 0.015, -5.25),
-        Vec3::new(0.55, FLOOR_Y + 0.105, BACK_Z - 0.35),
+        Vec3::new(-AISLE_HALF_WIDTH, FLOOR_Y + 0.015, -5.25),
+        Vec3::new(AISLE_HALF_WIDTH, FLOOR_Y + 0.105, BACK_Z - 0.35),
         materials.aisle_carpet,
     )?;
 
     for step in 0..STEP_COUNT {
-        let z_start = -3.95 + step as f32 * 1.12;
-        let z_end = z_start + 0.92;
-        let top_y = FLOOR_Y + 0.10 + step as f32 * 0.18;
+        let z_start = step_z_start(step);
+        let z_end = z_start + STEP_DEPTH;
+        let top_y = step_top_y(step);
 
         add_cube(
             scene,
@@ -482,6 +605,152 @@ fn add_aisle_and_steps(
             Vec3::new(3.75, top_y, z_end),
             materials.theater_carpet,
         )?;
+    }
+
+    Ok(())
+}
+
+fn add_seating(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+) -> Result<(), CinemaBuildError> {
+    for row in 0..SEAT_ROW_COUNT {
+        add_seat_row(scene, metadata, materials, row)?;
+    }
+
+    Ok(())
+}
+
+fn add_seat_row(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+    row: usize,
+) -> Result<(), CinemaBuildError> {
+    let platform_y = step_top_y(row);
+    let z_start = step_z_start(row);
+
+    for block in SeatBlock::ALL {
+        for column in 0..SEATS_PER_BLOCK {
+            add_seat(
+                scene,
+                metadata,
+                materials,
+                SeatPlacement {
+                    #[cfg(test)]
+                    row,
+                    #[cfg(test)]
+                    column,
+                    #[cfg(test)]
+                    block,
+                    center_x: seat_center_x(block, column),
+                    platform_y,
+                    z_start,
+                },
+            )?;
+        }
+    }
+
+    #[cfg(test)]
+    {
+        metadata.seat_rows.push(SeatRowMetadata {
+            row,
+            platform_y,
+            z_start,
+            seat_count: SEATS_PER_ROW,
+        });
+    }
+
+    Ok(())
+}
+
+fn add_seat(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+    placement: SeatPlacement,
+) -> Result<(), CinemaBuildError> {
+    let half_width = SEAT_WIDTH * 0.5;
+    let arm_outer_half_width = half_width + SEAT_ARM_WIDTH;
+    let cushion_min_y = placement.platform_y + SEAT_PLATFORM_CLEARANCE;
+    let cushion_max_y = cushion_min_y + SEAT_CUSHION_THICKNESS;
+    let cushion_min_z = placement.z_start + SEAT_FRONT_OFFSET;
+    let cushion_max_z = cushion_min_z + SEAT_CUSHION_DEPTH;
+    let back_min_z = cushion_max_z + SEAT_BACK_GAP;
+    let back_max_z = back_min_z + SEAT_BACK_THICKNESS;
+    let back_min_y = cushion_min_y + SEAT_CUSHION_THICKNESS * 0.45;
+    let back_max_y = placement.platform_y + SEAT_BACK_HEIGHT;
+    let arm_min_y = cushion_min_y;
+    let arm_max_y = placement.platform_y + SEAT_ARM_HEIGHT;
+    let arm_min_z = cushion_min_z - SEAT_BACK_GAP;
+    let arm_max_z = arm_min_z + SEAT_ARM_DEPTH;
+
+    let cushion_id = add_cube_id(
+        scene,
+        metadata,
+        CinemaElement::SeatCushion,
+        Vec3::new(
+            placement.center_x - half_width,
+            cushion_min_y,
+            cushion_min_z,
+        ),
+        Vec3::new(
+            placement.center_x + half_width,
+            cushion_max_y,
+            cushion_max_z,
+        ),
+        materials.seat_fabric,
+    )?;
+    let back_id = add_cube_id(
+        scene,
+        metadata,
+        CinemaElement::SeatBack,
+        Vec3::new(placement.center_x - half_width, back_min_y, back_min_z),
+        Vec3::new(placement.center_x + half_width, back_max_y, back_max_z),
+        materials.seat_fabric,
+    )?;
+    let left_arm_id = add_cube_id(
+        scene,
+        metadata,
+        CinemaElement::SeatArm,
+        Vec3::new(
+            placement.center_x - arm_outer_half_width,
+            arm_min_y,
+            arm_min_z,
+        ),
+        Vec3::new(placement.center_x - half_width, arm_max_y, arm_max_z),
+        materials.brushed_metal,
+    )?;
+    let right_arm_id = add_cube_id(
+        scene,
+        metadata,
+        CinemaElement::SeatArm,
+        Vec3::new(placement.center_x + half_width, arm_min_y, arm_min_z),
+        Vec3::new(
+            placement.center_x + arm_outer_half_width,
+            arm_max_y,
+            arm_max_z,
+        ),
+        materials.brushed_metal,
+    )?;
+
+    #[cfg(test)]
+    {
+        metadata.seats.push(SeatMetadata {
+            row: placement.row,
+            column: placement.column,
+            block: placement.block,
+            cushion_id,
+            back_id,
+            left_arm_id,
+            right_arm_id,
+        });
+    }
+
+    #[cfg(not(test))]
+    {
+        let _ = (cushion_id, back_id, left_arm_id, right_arm_id);
     }
 
     Ok(())
@@ -571,6 +840,23 @@ fn add_lights(scene: &mut Scene) {
     ));
 }
 
+fn step_z_start(step: usize) -> f32 {
+    STEP_Z_START + step as f32 * SEAT_ROW_SPACING
+}
+
+fn step_top_y(step: usize) -> f32 {
+    FLOOR_Y + STEP_TOP_OFFSET + step as f32 * STEP_HEIGHT_RISE
+}
+
+fn seat_center_x(block: SeatBlock, column: usize) -> f32 {
+    let distance_from_aisle = SEAT_BLOCK_FIRST_CENTER_X + column as f32 * SEAT_HORIZONTAL_SPACING;
+
+    match block {
+        SeatBlock::Left => -distance_from_aisle,
+        SeatBlock::Right => distance_from_aisle,
+    }
+}
+
 fn add_cube(
     scene: &mut Scene,
     metadata: &mut CinemaBuildMetadata,
@@ -579,12 +865,31 @@ fn add_cube(
     second_corner: Vec3,
     material_id: usize,
 ) -> Result<(), CinemaBuildError> {
+    add_cube_id(
+        scene,
+        metadata,
+        element,
+        first_corner,
+        second_corner,
+        material_id,
+    )
+    .map(|_| ())
+}
+
+fn add_cube_id(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    element: CinemaElement,
+    first_corner: Vec3,
+    second_corner: Vec3,
+    material_id: usize,
+) -> Result<usize, CinemaBuildError> {
     let cube_id = scene.cubes().len();
 
     scene.add_cube(Cube::new(first_corner, second_corner, material_id))?;
     metadata.elements.push((element, cube_id));
 
-    Ok(())
+    Ok(cube_id)
 }
 
 fn register_opening(metadata: &mut CinemaBuildMetadata) {
@@ -604,12 +909,14 @@ fn load_skybox(path: &'static str) -> Result<Skybox, CinemaBuildError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACOUSTIC_PANEL_COLUMNS, CinemaElement, ROOM_DEPTH, ROOM_HEIGHT, ROOM_WIDTH, STEP_COUNT,
-        build_cinema_scene_with_metadata,
+        ACOUSTIC_PANEL_COLUMNS, AISLE_HALF_WIDTH, CinemaElement, HALF_ROOM_WIDTH, ROOM_DEPTH,
+        ROOM_HEIGHT, ROOM_WIDTH, SCREEN_Z, SEAT_BLOCK_COUNT, SEAT_ROW_COUNT, SEATS_PER_BLOCK,
+        SEATS_PER_ROW, STEP_COUNT, TOTAL_SEATS, build_cinema_scene_with_metadata,
     };
     use crate::{
         camera::Camera,
         color::Color,
+        cube::Cube,
         framebuffer::Framebuffer,
         math::Vec3,
         ray::Ray,
@@ -642,6 +949,33 @@ mod tests {
             && point.z < cube.max.z
     }
 
+    fn cube_dimensions(cube: &Cube) -> Vec3 {
+        cube.max - cube.min
+    }
+
+    fn cube_center(cube: &Cube) -> Vec3 {
+        (cube.min + cube.max) * 0.5
+    }
+
+    fn assert_positive_finite_dimensions(cube: &Cube) {
+        let dimensions = cube_dimensions(cube);
+
+        assert!(dimensions.x.is_finite());
+        assert!(dimensions.y.is_finite());
+        assert!(dimensions.z.is_finite());
+        assert!(dimensions.x > 0.0);
+        assert!(dimensions.y > 0.0);
+        assert!(dimensions.z > 0.0);
+    }
+
+    fn required_material_id(material_id: Option<usize>) -> usize {
+        assert!(material_id.is_some());
+        match material_id {
+            Some(material_id) => material_id,
+            None => usize::MAX,
+        }
+    }
+
     #[test]
     fn build_cinema_scene_returns_valid_scene_with_geometry() {
         let (scene, metadata) = built_scene();
@@ -653,6 +987,9 @@ mod tests {
         assert_eq!(metadata.count(CinemaElement::RightWall), 1);
         assert!(metadata.count(CinemaElement::Opening) >= 1);
         assert_eq!(metadata.count(CinemaElement::Step), STEP_COUNT * 2);
+        assert_eq!(metadata.count(CinemaElement::SeatCushion), TOTAL_SEATS);
+        assert_eq!(metadata.count(CinemaElement::SeatBack), TOTAL_SEATS);
+        assert_eq!(metadata.count(CinemaElement::SeatArm), TOTAL_SEATS * 2);
         assert_eq!(
             metadata.count(CinemaElement::AcousticPanel),
             ACOUSTIC_PANEL_COLUMNS * 2
@@ -673,6 +1010,187 @@ mod tests {
         assert_eq!(scene.textures().len(), 5);
         assert!(textured >= 5);
         assert!(scene.skybox().is_some());
+    }
+
+    #[test]
+    fn cinema_has_expected_seating_layout() {
+        let (_, metadata) = built_scene();
+        let mut seats_by_row = [0; SEAT_ROW_COUNT];
+        let mut left_block_seats = [0; SEAT_ROW_COUNT];
+        let mut right_block_seats = [0; SEAT_ROW_COUNT];
+        let mut columns_by_row = [[0; SEATS_PER_BLOCK]; SEAT_ROW_COUNT];
+
+        assert_eq!(metadata.seat_rows().len(), SEAT_ROW_COUNT);
+        assert_eq!(metadata.seats().len(), TOTAL_SEATS);
+        assert_eq!(SEAT_BLOCK_COUNT, 2);
+
+        for row_metadata in metadata.seat_rows() {
+            assert!(row_metadata.row < SEAT_ROW_COUNT);
+            assert_eq!(row_metadata.seat_count, SEATS_PER_ROW);
+        }
+
+        for seat in metadata.seats() {
+            assert!(seat.row < SEAT_ROW_COUNT);
+            assert!(seat.column < SEATS_PER_BLOCK);
+            seats_by_row[seat.row] += 1;
+            columns_by_row[seat.row][seat.column] += 1;
+
+            match seat.block {
+                super::SeatBlock::Left => left_block_seats[seat.row] += 1,
+                super::SeatBlock::Right => right_block_seats[seat.row] += 1,
+            }
+        }
+
+        for row in 0..SEAT_ROW_COUNT {
+            assert_eq!(seats_by_row[row], SEATS_PER_ROW);
+            assert_eq!(left_block_seats[row], SEATS_PER_BLOCK);
+            assert_eq!(right_block_seats[row], SEATS_PER_BLOCK);
+
+            for column_count in columns_by_row[row] {
+                assert_eq!(column_count, SEAT_BLOCK_COUNT);
+            }
+        }
+    }
+
+    #[test]
+    fn seat_parts_are_finite_sized_and_use_expected_materials() {
+        let (scene, metadata) = built_scene();
+        let fabric_id = required_material_id(metadata.seat_fabric_material_id());
+        let metal_id = required_material_id(metadata.brushed_metal_material_id());
+
+        for seat in metadata.seats() {
+            for cube_id in seat.cube_ids() {
+                assert!(cube_id < scene.cubes().len());
+
+                if let Some(cube) = scene.cubes().get(cube_id) {
+                    assert_positive_finite_dimensions(cube);
+                    assert!(scene.material(cube.material_id).is_some());
+                }
+            }
+
+            if let Some(cushion) = scene.cubes().get(seat.cushion_id) {
+                assert_eq!(cushion.material_id, fabric_id);
+                assert!(
+                    scene
+                        .material(cushion.material_id)
+                        .and_then(|material| material.texture_id)
+                        .is_some()
+                );
+            }
+
+            if let Some(back) = scene.cubes().get(seat.back_id) {
+                assert_eq!(back.material_id, fabric_id);
+                assert!(
+                    scene
+                        .material(back.material_id)
+                        .and_then(|material| material.texture_id)
+                        .is_some()
+                );
+            }
+
+            if let Some(left_arm) = scene.cubes().get(seat.left_arm_id) {
+                assert_eq!(left_arm.material_id, metal_id);
+            }
+
+            if let Some(right_arm) = scene.cubes().get(seat.right_arm_id) {
+                assert_eq!(right_arm.material_id, metal_id);
+            }
+        }
+
+        assert_eq!(scene.textures().len(), metadata.textured_material_count());
+    }
+
+    #[test]
+    fn seat_rows_follow_steps_and_seats_face_screen() {
+        let (scene, metadata) = built_scene();
+
+        for row_pair in metadata.seat_rows().windows(2) {
+            assert!(row_pair[1].platform_y > row_pair[0].platform_y);
+            assert!(row_pair[1].z_start > row_pair[0].z_start);
+        }
+
+        for seat in metadata.seats() {
+            let row_metadata = metadata
+                .seat_rows()
+                .iter()
+                .find(|row_metadata| row_metadata.row == seat.row);
+            assert!(row_metadata.is_some());
+
+            if let (Some(row_metadata), Some(cushion), Some(back)) = (
+                row_metadata,
+                scene.cubes().get(seat.cushion_id),
+                scene.cubes().get(seat.back_id),
+            ) {
+                assert!(cushion.min.y >= row_metadata.platform_y);
+                assert!(back.min.z > cushion.max.z);
+                assert!(back.max.z <= row_metadata.rear_z());
+            }
+        }
+    }
+
+    #[test]
+    fn seating_preserves_aisle_bounds_and_screen_access() {
+        let (scene, metadata) = built_scene();
+        let camera = initial_camera(4.0 / 3.0);
+        let screen_ids = metadata.cube_ids(CinemaElement::Screen);
+
+        for seat in metadata.seats() {
+            for cube_id in seat.cube_ids() {
+                if let Some(cube) = scene.cubes().get(cube_id) {
+                    assert!(cube.max.x <= -AISLE_HALF_WIDTH || cube.min.x >= AISLE_HALF_WIDTH);
+                    assert!(cube.min.x > -HALF_ROOM_WIDTH);
+                    assert!(cube.max.x < HALF_ROOM_WIDTH);
+                    assert!(cube.min.z > SCREEN_Z);
+                }
+            }
+        }
+
+        let screen_ray = Ray::new(camera.position, camera.target - camera.position);
+        let screen_hit = scene.intersect(&screen_ray, 0.001, 100.0);
+        let screen_material_id = screen_ids
+            .first()
+            .and_then(|screen_id| scene.cubes().get(*screen_id))
+            .map(|screen_cube| screen_cube.material_id);
+
+        assert!(screen_hit.is_some());
+        if let Some(screen_hit) = screen_hit {
+            assert_eq!(Some(screen_hit.material_id), screen_material_id);
+        }
+
+        let aisle_origin = Vec3::new(0.0, 0.45, -1.0);
+        let aisle_target = Vec3::new(0.0, 0.6, SCREEN_Z);
+        let aisle_ray = Ray::new(aisle_origin, aisle_target - aisle_origin);
+        let aisle_hit = scene.intersect(&aisle_ray, 0.001, 100.0);
+
+        assert!(aisle_hit.is_some());
+        if let Some(aisle_hit) = aisle_hit {
+            assert_eq!(Some(aisle_hit.material_id), screen_material_id);
+        }
+    }
+
+    #[test]
+    fn ray_can_hit_a_textured_seat() {
+        let (scene, metadata) = built_scene();
+        let fabric_id = required_material_id(metadata.seat_fabric_material_id());
+        let target_seat = metadata.seats().iter().find(|seat| {
+            seat.row == 0 && seat.column == 1 && seat.block == super::SeatBlock::Right
+        });
+
+        assert!(target_seat.is_some());
+
+        if let Some(target_seat) = target_seat
+            && let Some(cushion) = scene.cubes().get(target_seat.cushion_id)
+        {
+            let target = cube_center(cushion);
+            let origin = target + Vec3::new(0.0, 0.32, -0.7);
+            let ray = Ray::new(origin, target - origin);
+            let hit = scene.intersect(&ray, 0.001, 10.0);
+
+            assert!(hit.is_some());
+            if let Some(hit) = hit {
+                assert_eq!(hit.material_id, fabric_id);
+            }
+        }
     }
 
     #[test]
