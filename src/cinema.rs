@@ -56,6 +56,29 @@ const SEAT_ARM_DEPTH: f32 = 0.56;
 const SEAT_PLATFORM_CLEARANCE: f32 = 0.03;
 const SEAT_FRONT_OFFSET: f32 = 0.18;
 const SEAT_BACK_GAP: f32 = 0.02;
+const PROJECTOR_BODY_MIN: Vec3 = Vec3::new(-3.08, 2.48, 2.30);
+const PROJECTOR_BODY_MAX: Vec3 = Vec3::new(-2.22, 2.92, 3.05);
+const PROJECTOR_LENS_MIN: Vec3 = Vec3::new(-2.78, 2.58, 2.16);
+const PROJECTOR_LENS_MAX: Vec3 = Vec3::new(-2.52, 2.80, 2.26);
+#[cfg(test)]
+const PROJECTOR_LENS_APERTURE: Vec3 = Vec3::new(-2.65, 2.69, 2.15);
+const PROJECTOR_PIECE_COUNT: usize = 9;
+#[cfg(test)]
+const PROJECTOR_MIN_PIECES: usize = 5;
+#[cfg(test)]
+const PROJECTOR_MAX_PIECES: usize = 12;
+const AFTER_SHOW_DETAIL_CUBE_COUNT: usize = 28;
+const POPCORN_KERNEL_COUNT: usize = 8;
+#[cfg(test)]
+const MIN_POPCORN_KERNELS: usize = 6;
+#[cfg(test)]
+const MAX_POPCORN_KERNELS: usize = 12;
+const TICKET_COUNT: usize = 2;
+const WRAPPER_COUNT: usize = 4;
+#[cfg(test)]
+const AISLE_CLEAR_HALF_WIDTH: f32 = 0.18;
+#[cfg(test)]
+const MAX_REASONABLE_CINEMA_CUBES: usize = 200;
 
 const SEAT_FABRIC_TEXTURE_PATH: &str = "assets/textures/seat_fabric.ppm";
 const THEATER_CARPET_TEXTURE_PATH: &str = "assets/textures/theater_carpet.ppm";
@@ -111,6 +134,10 @@ struct CinemaMaterials {
     screen: usize,
     aisle_carpet: usize,
     exit_sign: usize,
+    projector_indicator: usize,
+    popcorn_kernel: usize,
+    soda_spill: usize,
+    paper_trash: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,7 +156,39 @@ pub(crate) enum CinemaElement {
     SeatCushion,
     SeatBack,
     SeatArm,
+    ProjectorBody,
+    ProjectorLens,
+    ProjectorSupport,
+    ProjectorDetail,
+    ProjectorIndicator,
+    PopcornBox,
+    PopcornKernel,
+    FallenCup,
+    SodaSpill,
+    DiscardedCan,
+    Ticket,
+    Wrapper,
     Opening,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ProjectorPart {
+    Body,
+    Lens,
+    Support,
+    Detail,
+    Indicator,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AfterShowDetail {
+    PopcornBox,
+    PopcornKernel,
+    FallenCup,
+    SodaSpill,
+    DiscardedCan,
+    Ticket,
+    Wrapper,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -163,6 +222,29 @@ struct SeatMetadata {
     right_arm_id: usize,
 }
 
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct ProjectorMetadata {
+    pieces: Vec<(ProjectorPart, usize)>,
+    lens_position: Vec3,
+    screen_center: Vec3,
+    body_material_id: usize,
+    lens_material_id: usize,
+    support_material_id: usize,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct AfterShowMetadata {
+    pieces: Vec<(AfterShowDetail, usize)>,
+    popcorn_box_material_id: usize,
+    popcorn_kernel_material_id: usize,
+    cup_material_id: usize,
+    spill_material_id: usize,
+    can_material_id: usize,
+    paper_material_id: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SeatPlacement {
     #[cfg(test)]
@@ -188,6 +270,14 @@ pub(crate) struct CinemaBuildMetadata {
     seat_fabric_material_id: Option<usize>,
     #[cfg(test)]
     brushed_metal_material_id: Option<usize>,
+    #[cfg(test)]
+    dark_wall_material_id: Option<usize>,
+    #[cfg(test)]
+    transparent_plastic_material_id: Option<usize>,
+    #[cfg(test)]
+    projector: Option<ProjectorMetadata>,
+    #[cfg(test)]
+    after_show: Option<AfterShowMetadata>,
 }
 
 #[cfg(test)]
@@ -224,6 +314,72 @@ impl CinemaBuildMetadata {
 
     fn brushed_metal_material_id(&self) -> Option<usize> {
         self.brushed_metal_material_id
+    }
+
+    fn dark_wall_material_id(&self) -> Option<usize> {
+        self.dark_wall_material_id
+    }
+
+    fn transparent_plastic_material_id(&self) -> Option<usize> {
+        self.transparent_plastic_material_id
+    }
+
+    fn projector(&self) -> Option<&ProjectorMetadata> {
+        self.projector.as_ref()
+    }
+
+    fn after_show(&self) -> Option<&AfterShowMetadata> {
+        self.after_show.as_ref()
+    }
+}
+
+#[cfg(test)]
+impl ProjectorMetadata {
+    fn pieces(&self) -> &[(ProjectorPart, usize)] {
+        &self.pieces
+    }
+
+    fn count(&self, part: ProjectorPart) -> usize {
+        self.pieces
+            .iter()
+            .filter(|(registered, _)| *registered == part)
+            .count()
+    }
+
+    fn cube_ids(&self) -> Vec<usize> {
+        self.pieces.iter().map(|(_, cube_id)| *cube_id).collect()
+    }
+
+    fn cube_ids_for(&self, part: ProjectorPart) -> Vec<usize> {
+        self.pieces
+            .iter()
+            .filter_map(|(registered, cube_id)| (*registered == part).then_some(*cube_id))
+            .collect()
+    }
+}
+
+#[cfg(test)]
+impl AfterShowMetadata {
+    fn pieces(&self) -> &[(AfterShowDetail, usize)] {
+        &self.pieces
+    }
+
+    fn count(&self, detail: AfterShowDetail) -> usize {
+        self.pieces
+            .iter()
+            .filter(|(registered, _)| *registered == detail)
+            .count()
+    }
+
+    fn cube_ids(&self) -> Vec<usize> {
+        self.pieces.iter().map(|(_, cube_id)| *cube_id).collect()
+    }
+
+    fn cube_ids_for(&self, detail: AfterShowDetail) -> Vec<usize> {
+        self.pieces
+            .iter()
+            .filter_map(|(registered, cube_id)| (*registered == detail).then_some(*cube_id))
+            .collect()
     }
 }
 
@@ -271,7 +427,9 @@ fn build_cinema_scene_internal() -> Result<(Scene, CinemaBuildMetadata), CinemaB
     add_aisle_and_steps(&mut scene, &mut metadata, materials)?;
     add_seating(&mut scene, &mut metadata, materials)?;
     add_exit(&mut scene, &mut metadata, materials)?;
-    add_lights(&mut scene);
+    add_projector(&mut scene, &mut metadata, materials)?;
+    add_after_show_details(&mut scene, &mut metadata, materials)?;
+    configure_cinema_lighting(&mut scene);
 
     Ok((scene, metadata))
 }
@@ -393,11 +551,49 @@ fn register_materials(
         1.0,
         Color::new(0.0, 0.55, 0.18),
     ))?;
+    let projector_indicator = scene.add_material(Material::new(
+        Color::new(0.28, 0.70, 1.0),
+        0.45,
+        36.0,
+        0.08,
+        0.0,
+        1.0,
+        Color::new(0.04, 0.16, 0.32),
+    ))?;
+    let popcorn_kernel = scene.add_material(Material::new(
+        Color::new(1.0, 0.88, 0.56),
+        0.10,
+        10.0,
+        0.0,
+        0.0,
+        1.0,
+        Color::BLACK,
+    ))?;
+    let soda_spill = scene.add_material(Material::new(
+        Color::new(0.18, 0.045, 0.018),
+        0.48,
+        44.0,
+        0.22,
+        0.10,
+        1.33,
+        Color::BLACK,
+    ))?;
+    let paper_trash = scene.add_material(Material::new(
+        Color::new(0.94, 0.80, 0.50),
+        0.14,
+        12.0,
+        0.01,
+        0.0,
+        1.0,
+        Color::BLACK,
+    ))?;
 
     #[cfg(test)]
     {
         metadata.seat_fabric_material_id = Some(seat_fabric);
         metadata.brushed_metal_material_id = Some(brushed_metal);
+        metadata.dark_wall_material_id = Some(dark_wall);
+        metadata.transparent_plastic_material_id = Some(transparent_plastic);
     }
 
     Ok(CinemaMaterials {
@@ -411,6 +607,10 @@ fn register_materials(
         screen,
         aisle_carpet,
         exit_sign,
+        projector_indicator,
+        popcorn_kernel,
+        soda_spill,
+        paper_trash,
     })
 }
 
@@ -817,11 +1017,497 @@ fn add_exit(
     )
 }
 
-fn add_lights(scene: &mut Scene) {
+fn add_projector(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+) -> Result<(), CinemaBuildError> {
+    let mut pieces = Vec::with_capacity(PROJECTOR_PIECE_COUNT);
+
+    let body_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Body,
+        PROJECTOR_BODY_MIN,
+        PROJECTOR_BODY_MAX,
+        materials.brushed_metal,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Body, body_id);
+
+    let lens_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Lens,
+        PROJECTOR_LENS_MIN,
+        PROJECTOR_LENS_MAX,
+        materials.transparent_plastic,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Lens, lens_id);
+
+    let front_frame_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Detail,
+        Vec3::new(-2.90, 2.53, 2.22),
+        Vec3::new(-2.40, 2.85, 2.29),
+        materials.brushed_metal,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Detail, front_frame_id);
+
+    let rear_panel_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Detail,
+        Vec3::new(-3.02, 2.56, 3.07),
+        Vec3::new(-2.28, 2.84, 3.13),
+        materials.dark_wall,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Detail, rear_panel_id);
+
+    let left_vent_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Detail,
+        Vec3::new(-3.12, 2.57, 2.52),
+        Vec3::new(-3.06, 2.83, 2.88),
+        materials.dark_wall,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Detail, left_vent_id);
+
+    let right_vent_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Detail,
+        Vec3::new(-2.24, 2.57, 2.52),
+        Vec3::new(-2.18, 2.83, 2.88),
+        materials.dark_wall,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Detail, right_vent_id);
+
+    let support_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Support,
+        Vec3::new(-2.72, 2.92, 2.24),
+        Vec3::new(-2.58, 3.19, 2.38),
+        materials.brushed_metal,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Support, support_id);
+
+    let ceiling_plate_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Support,
+        Vec3::new(-2.98, 3.19, 1.98),
+        Vec3::new(-2.36, 3.24, 2.34),
+        materials.brushed_metal,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Support, ceiling_plate_id);
+
+    let indicator_id = add_projector_cube(
+        scene,
+        metadata,
+        ProjectorPartRuntime::Indicator,
+        Vec3::new(-2.38, 2.65, 2.20),
+        Vec3::new(-2.30, 2.73, 2.27),
+        materials.projector_indicator,
+    )?;
+    register_projector_piece(&mut pieces, ProjectorPart::Indicator, indicator_id);
+
+    #[cfg(test)]
+    {
+        debug_assert_eq!(pieces.len(), PROJECTOR_PIECE_COUNT);
+        metadata.projector = Some(ProjectorMetadata {
+            pieces,
+            lens_position: PROJECTOR_LENS_APERTURE,
+            screen_center: screen_center(),
+            body_material_id: materials.brushed_metal,
+            lens_material_id: materials.transparent_plastic,
+            support_material_id: materials.brushed_metal,
+        });
+    }
+
+    Ok(())
+}
+
+fn add_after_show_details(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+) -> Result<(), CinemaBuildError> {
+    let mut pieces = Vec::with_capacity(AFTER_SHOW_DETAIL_CUBE_COUNT);
+
+    add_popcorn_box(scene, metadata, materials, &mut pieces)?;
+    add_scattered_popcorn(scene, metadata, materials, &mut pieces)?;
+    add_fallen_cup_and_spill(scene, metadata, materials, &mut pieces)?;
+    add_discarded_can(scene, metadata, materials, &mut pieces)?;
+    add_tickets_and_wrappers(scene, metadata, materials, &mut pieces)?;
+
+    #[cfg(test)]
+    {
+        debug_assert_eq!(pieces.len(), AFTER_SHOW_DETAIL_CUBE_COUNT);
+        metadata.after_show = Some(AfterShowMetadata {
+            pieces,
+            popcorn_box_material_id: materials.popcorn_cardboard,
+            popcorn_kernel_material_id: materials.popcorn_kernel,
+            cup_material_id: materials.transparent_plastic,
+            spill_material_id: materials.soda_spill,
+            can_material_id: materials.brushed_metal,
+            paper_material_id: materials.paper_trash,
+        });
+    }
+
+    Ok(())
+}
+
+fn add_popcorn_box(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+    pieces: &mut Vec<(AfterShowDetail, usize)>,
+) -> Result<(), CinemaBuildError> {
+    let platform_y = step_top_y(1);
+    let base_y = platform_y + 0.012;
+    let box_pieces = [
+        (
+            Vec3::new(0.82, base_y, -2.48),
+            Vec3::new(1.10, base_y + 0.045, -2.08),
+        ),
+        (
+            Vec3::new(0.80, base_y + 0.045, -2.46),
+            Vec3::new(0.86, base_y + 0.31, -2.11),
+        ),
+        (
+            Vec3::new(1.08, base_y + 0.045, -2.44),
+            Vec3::new(1.14, base_y + 0.27, -2.09),
+        ),
+        (
+            Vec3::new(0.85, base_y + 0.045, -2.12),
+            Vec3::new(1.11, base_y + 0.29, -2.05),
+        ),
+        (
+            Vec3::new(0.86, base_y + 0.045, -2.53),
+            Vec3::new(1.06, base_y + 0.16, -2.47),
+        ),
+    ];
+
+    for (min, max) in box_pieces {
+        add_after_show_cube(
+            scene,
+            metadata,
+            pieces,
+            AfterShowDetail::PopcornBox,
+            min,
+            max,
+            materials.popcorn_cardboard,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn add_scattered_popcorn(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+    pieces: &mut Vec<(AfterShowDetail, usize)>,
+) -> Result<(), CinemaBuildError> {
+    let platform_y = step_top_y(1);
+    let popcorn_pieces: [(f32, f32, f32, f32, f32); POPCORN_KERNEL_COUNT] = [
+        (0.76, -2.55, 0.055, 0.045, 0.060),
+        (0.92, -2.65, 0.045, 0.050, 0.040),
+        (1.03, -2.58, 0.060, 0.045, 0.055),
+        (0.88, -2.35, 0.050, 0.055, 0.045),
+        (1.07, -2.32, 0.050, 0.040, 0.060),
+        (0.72, -2.22, 0.045, 0.045, 0.050),
+        (1.00, -2.18, 0.055, 0.050, 0.050),
+        (0.84, -2.06, 0.050, 0.040, 0.045),
+    ];
+
+    for (x, z, width, height, depth) in popcorn_pieces {
+        let min = Vec3::new(x, platform_y + 0.014, z);
+        add_after_show_cube(
+            scene,
+            metadata,
+            pieces,
+            AfterShowDetail::PopcornKernel,
+            min,
+            min + Vec3::new(width, height, depth),
+            materials.popcorn_kernel,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn add_fallen_cup_and_spill(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+    pieces: &mut Vec<(AfterShowDetail, usize)>,
+) -> Result<(), CinemaBuildError> {
+    let row_top = step_top_y(0);
+    let cup_y = row_top + 0.015;
+    let cup_pieces = [
+        (
+            Vec3::new(-1.12, cup_y, -3.45),
+            Vec3::new(-0.77, cup_y + 0.13, -3.22),
+        ),
+        (
+            Vec3::new(-1.14, cup_y + 0.01, -3.49),
+            Vec3::new(-1.08, cup_y + 0.16, -3.18),
+        ),
+        (
+            Vec3::new(-0.80, cup_y + 0.02, -3.41),
+            Vec3::new(-0.72, cup_y + 0.11, -3.26),
+        ),
+    ];
+
+    for (min, max) in cup_pieces {
+        add_after_show_cube(
+            scene,
+            metadata,
+            pieces,
+            AfterShowDetail::FallenCup,
+            min,
+            max,
+            materials.transparent_plastic,
+        )?;
+    }
+
+    let aisle_top = FLOOR_Y + 0.105;
+    let spill_y = aisle_top + 0.007;
+    let spill_pieces = [
+        (
+            Vec3::new(-0.68, spill_y, -3.52),
+            Vec3::new(-0.30, spill_y + 0.012, -3.26),
+        ),
+        (
+            Vec3::new(-0.58, spill_y + 0.004, -3.30),
+            Vec3::new(-0.22, spill_y + 0.016, -3.08),
+        ),
+        (
+            Vec3::new(-0.45, spill_y + 0.002, -3.61),
+            Vec3::new(-0.25, spill_y + 0.014, -3.47),
+        ),
+    ];
+
+    for (min, max) in spill_pieces {
+        add_after_show_cube(
+            scene,
+            metadata,
+            pieces,
+            AfterShowDetail::SodaSpill,
+            min,
+            max,
+            materials.soda_spill,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn add_discarded_can(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+    pieces: &mut Vec<(AfterShowDetail, usize)>,
+) -> Result<(), CinemaBuildError> {
+    let platform_y = step_top_y(2);
+    let can_y = platform_y + 0.012;
+    let can_pieces = [
+        (
+            Vec3::new(0.84, can_y, -1.43),
+            Vec3::new(1.10, can_y + 0.11, -1.22),
+        ),
+        (
+            Vec3::new(0.80, can_y + 0.01, -1.40),
+            Vec3::new(0.86, can_y + 0.13, -1.25),
+        ),
+        (
+            Vec3::new(1.08, can_y + 0.01, -1.39),
+            Vec3::new(1.14, can_y + 0.12, -1.26),
+        ),
+    ];
+
+    for (min, max) in can_pieces {
+        add_after_show_cube(
+            scene,
+            metadata,
+            pieces,
+            AfterShowDetail::DiscardedCan,
+            min,
+            max,
+            materials.brushed_metal,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn add_tickets_and_wrappers(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    materials: CinemaMaterials,
+    pieces: &mut Vec<(AfterShowDetail, usize)>,
+) -> Result<(), CinemaBuildError> {
+    let aisle_y = FLOOR_Y + 0.112;
+    let rear_ticket = (
+        Vec3::new(0.28, aisle_y, 2.76),
+        Vec3::new(0.58, aisle_y + 0.014, 3.04),
+    );
+    let step_y = step_top_y(3) + 0.012;
+    let step_ticket = (
+        Vec3::new(-1.12, step_y, -0.48),
+        Vec3::new(-0.84, step_y + 0.014, -0.24),
+    );
+
+    let ticket_pieces: [(Vec3, Vec3); TICKET_COUNT] = [rear_ticket, step_ticket];
+
+    for (min, max) in ticket_pieces {
+        add_after_show_cube(
+            scene,
+            metadata,
+            pieces,
+            AfterShowDetail::Ticket,
+            min,
+            max,
+            materials.paper_trash,
+        )?;
+    }
+
+    let wrapper_pieces: [(Vec3, Vec3); WRAPPER_COUNT] = [
+        (
+            Vec3::new(-1.08, step_top_y(2) + 0.012, -1.86),
+            Vec3::new(-0.82, step_top_y(2) + 0.030, -1.68),
+        ),
+        (
+            Vec3::new(-0.54, aisle_y + 0.002, 3.70),
+            Vec3::new(-0.30, aisle_y + 0.020, 3.91),
+        ),
+        (
+            Vec3::new(1.00, FLOOR_Y + 0.012, -4.58),
+            Vec3::new(1.26, FLOOR_Y + 0.030, -4.38),
+        ),
+        (
+            Vec3::new(-2.18, FLOOR_Y + 0.012, 3.18),
+            Vec3::new(-1.92, FLOOR_Y + 0.030, 3.40),
+        ),
+    ];
+
+    for (min, max) in wrapper_pieces {
+        add_after_show_cube(
+            scene,
+            metadata,
+            pieces,
+            AfterShowDetail::Wrapper,
+            min,
+            max,
+            materials.paper_trash,
+        )?;
+    }
+
+    Ok(())
+}
+
+impl AfterShowDetail {
+    fn element(self) -> CinemaElement {
+        match self {
+            Self::PopcornBox => CinemaElement::PopcornBox,
+            Self::PopcornKernel => CinemaElement::PopcornKernel,
+            Self::FallenCup => CinemaElement::FallenCup,
+            Self::SodaSpill => CinemaElement::SodaSpill,
+            Self::DiscardedCan => CinemaElement::DiscardedCan,
+            Self::Ticket => CinemaElement::Ticket,
+            Self::Wrapper => CinemaElement::Wrapper,
+        }
+    }
+}
+
+fn add_after_show_cube(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    pieces: &mut Vec<(AfterShowDetail, usize)>,
+    detail: AfterShowDetail,
+    first_corner: Vec3,
+    second_corner: Vec3,
+    material_id: usize,
+) -> Result<(), CinemaBuildError> {
+    let cube_id = add_cube_id(
+        scene,
+        metadata,
+        detail.element(),
+        first_corner,
+        second_corner,
+        material_id,
+    )?;
+    pieces.push((detail, cube_id));
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ProjectorPartRuntime {
+    Body,
+    Lens,
+    Support,
+    Detail,
+    Indicator,
+}
+
+impl ProjectorPartRuntime {
+    fn element(self) -> CinemaElement {
+        match self {
+            Self::Body => CinemaElement::ProjectorBody,
+            Self::Lens => CinemaElement::ProjectorLens,
+            Self::Support => CinemaElement::ProjectorSupport,
+            Self::Detail => CinemaElement::ProjectorDetail,
+            Self::Indicator => CinemaElement::ProjectorIndicator,
+        }
+    }
+}
+
+fn add_projector_cube(
+    scene: &mut Scene,
+    metadata: &mut CinemaBuildMetadata,
+    part: ProjectorPartRuntime,
+    first_corner: Vec3,
+    second_corner: Vec3,
+    material_id: usize,
+) -> Result<usize, CinemaBuildError> {
+    add_cube_id(
+        scene,
+        metadata,
+        part.element(),
+        first_corner,
+        second_corner,
+        material_id,
+    )
+}
+
+fn register_projector_piece(
+    pieces: &mut Vec<(ProjectorPart, usize)>,
+    part: ProjectorPart,
+    cube_id: usize,
+) {
+    pieces.push((part, cube_id));
+}
+
+#[cfg(test)]
+fn screen_center() -> Vec3 {
+    Vec3::new(0.0, SCREEN_BOTTOM_Y + SCREEN_HEIGHT * 0.5, SCREEN_Z)
+}
+
+fn configure_cinema_lighting(scene: &mut Scene) {
     scene.add_light(PointLight::new(
-        Vec3::new(0.0, 1.45, -4.85),
-        Color::new(0.42, 0.58, 1.0),
-        9.0,
+        Vec3::new(0.0, 1.55, -5.25),
+        Color::new(0.50, 0.66, 1.0),
+        10.2,
+    ));
+    scene.add_light(PointLight::new(
+        Vec3::new(0.0, 0.42, -3.65),
+        Color::new(0.34, 0.46, 0.94),
+        2.4,
     ));
     scene.add_light(PointLight::new(
         Vec3::new(-0.55, 0.55, -0.35),
@@ -909,9 +1595,13 @@ fn load_skybox(path: &'static str) -> Result<Skybox, CinemaBuildError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ACOUSTIC_PANEL_COLUMNS, AISLE_HALF_WIDTH, CinemaElement, HALF_ROOM_WIDTH, ROOM_DEPTH,
-        ROOM_HEIGHT, ROOM_WIDTH, SCREEN_Z, SEAT_BLOCK_COUNT, SEAT_ROW_COUNT, SEATS_PER_BLOCK,
-        SEATS_PER_ROW, STEP_COUNT, TOTAL_SEATS, build_cinema_scene_with_metadata,
+        ACOUSTIC_PANEL_COLUMNS, AFTER_SHOW_DETAIL_CUBE_COUNT, AISLE_CLEAR_HALF_WIDTH,
+        AISLE_HALF_WIDTH, AfterShowDetail, BACK_Z, CinemaElement, FLOOR_Y, FRONT_Z,
+        HALF_ROOM_WIDTH, MAX_POPCORN_KERNELS, MAX_REASONABLE_CINEMA_CUBES, MIN_POPCORN_KERNELS,
+        PROJECTOR_MAX_PIECES, PROJECTOR_MIN_PIECES, ProjectorPart, ROOM_DEPTH, ROOM_HEIGHT,
+        ROOM_WIDTH, SCREEN_Z, SEAT_BACK_HEIGHT, SEAT_BLOCK_COUNT, SEAT_ROW_COUNT, SEATS_PER_BLOCK,
+        SEATS_PER_ROW, STEP_COUNT, TICKET_COUNT, TOTAL_SEATS, WRAPPER_COUNT,
+        build_cinema_scene_with_metadata,
     };
     use crate::{
         camera::Camera,
@@ -976,6 +1666,50 @@ mod tests {
         }
     }
 
+    fn required_projector(metadata: &super::CinemaBuildMetadata) -> &super::ProjectorMetadata {
+        let projector = metadata.projector();
+        assert!(projector.is_some());
+        match projector {
+            Some(projector) => projector,
+            None => unreachable!("projector metadata was asserted as present"),
+        }
+    }
+
+    fn required_after_show(metadata: &super::CinemaBuildMetadata) -> &super::AfterShowMetadata {
+        let after_show = metadata.after_show();
+        assert!(after_show.is_some());
+        match after_show {
+            Some(after_show) => after_show,
+            None => unreachable!("after-show metadata was asserted as present"),
+        }
+    }
+
+    fn cubes_overlap(left: &Cube, right: &Cube) -> bool {
+        left.min.x < right.max.x
+            && left.max.x > right.min.x
+            && left.min.y < right.max.y
+            && left.max.y > right.min.y
+            && left.min.z < right.max.z
+            && left.max.z > right.min.z
+    }
+
+    fn assert_finite_vec3(vector: Vec3) {
+        assert!(vector.x.is_finite());
+        assert!(vector.y.is_finite());
+        assert!(vector.z.is_finite());
+    }
+
+    fn average_center(scene: &crate::scene::Scene, cube_ids: &[usize]) -> Vec3 {
+        assert!(!cube_ids.is_empty());
+        let mut center = Vec3::ZERO;
+
+        for cube_id in cube_ids {
+            center += cube_center(&scene.cubes()[*cube_id]);
+        }
+
+        center / cube_ids.len() as f32
+    }
+
     #[test]
     fn build_cinema_scene_returns_valid_scene_with_geometry() {
         let (scene, metadata) = built_scene();
@@ -995,6 +1729,407 @@ mod tests {
             ACOUSTIC_PANEL_COLUMNS * 2
         );
         assert!(metadata.count(CinemaElement::Door) >= 1);
+        assert_eq!(metadata.count(CinemaElement::ProjectorBody), 1);
+        assert_eq!(metadata.count(CinemaElement::ProjectorLens), 1);
+        assert!(metadata.count(CinemaElement::ProjectorSupport) >= 1);
+        assert_eq!(metadata.count(CinemaElement::PopcornBox), 5);
+        assert_eq!(metadata.count(CinemaElement::PopcornKernel), 8);
+        assert_eq!(metadata.count(CinemaElement::FallenCup), 3);
+        assert_eq!(metadata.count(CinemaElement::SodaSpill), 3);
+        assert_eq!(metadata.count(CinemaElement::DiscardedCan), 3);
+        assert_eq!(metadata.count(CinemaElement::Ticket), TICKET_COUNT);
+        assert_eq!(metadata.count(CinemaElement::Wrapper), WRAPPER_COUNT);
+    }
+
+    #[test]
+    fn cinema_contains_one_projector_with_required_parts() {
+        let (_, metadata) = built_scene();
+        let projector = required_projector(&metadata);
+
+        assert_eq!(projector.count(ProjectorPart::Body), 1);
+        assert_eq!(projector.count(ProjectorPart::Lens), 1);
+        assert!(projector.count(ProjectorPart::Support) >= 1);
+        assert!(projector.count(ProjectorPart::Detail) >= 1);
+        assert!(projector.pieces().len() >= PROJECTOR_MIN_PIECES);
+        assert!(projector.pieces().len() <= PROJECTOR_MAX_PIECES);
+    }
+
+    #[test]
+    fn projector_pieces_are_valid_and_use_intended_materials() {
+        let (scene, metadata) = built_scene();
+        let projector = required_projector(&metadata);
+        let metal_id = required_material_id(metadata.brushed_metal_material_id());
+        let dark_id = required_material_id(metadata.dark_wall_material_id());
+        let lens_id = required_material_id(metadata.transparent_plastic_material_id());
+
+        assert_eq!(projector.body_material_id, metal_id);
+        assert_eq!(projector.lens_material_id, lens_id);
+        assert_eq!(projector.support_material_id, metal_id);
+
+        for (part, cube_id) in projector.pieces() {
+            assert!(*cube_id < scene.cubes().len());
+            let cube = &scene.cubes()[*cube_id];
+            assert_positive_finite_dimensions(cube);
+            assert!(scene.material(cube.material_id).is_some());
+
+            match part {
+                ProjectorPart::Body | ProjectorPart::Support => {
+                    assert_eq!(cube.material_id, metal_id);
+                }
+                ProjectorPart::Lens => {
+                    assert_eq!(cube.material_id, lens_id);
+                }
+                ProjectorPart::Detail => {
+                    assert!(cube.material_id == metal_id || cube.material_id == dark_id);
+                }
+                ProjectorPart::Indicator => {
+                    assert_ne!(
+                        scene
+                            .material(cube.material_id)
+                            .map(|material| material.emission),
+                        Some(Color::BLACK)
+                    );
+                }
+            }
+        }
+
+        assert_eq!(scene.textures().len(), metadata.textured_material_count());
+    }
+
+    #[test]
+    fn projector_is_rear_elevated_and_outside_the_aisle() {
+        let (scene, metadata) = built_scene();
+        let projector = required_projector(&metadata);
+        let rear_row_top = metadata
+            .seat_rows()
+            .iter()
+            .map(|row| row.platform_y + SEAT_BACK_HEIGHT)
+            .fold(FLOOR_Y, f32::max);
+
+        for cube_id in projector.cube_ids() {
+            let cube = &scene.cubes()[cube_id];
+
+            assert!(cube.max.x <= -AISLE_HALF_WIDTH || cube.min.x >= AISLE_HALF_WIDTH);
+            assert!(cube.min.x > -HALF_ROOM_WIDTH);
+            assert!(cube.max.x < HALF_ROOM_WIDTH);
+            assert!(cube.min.z > 0.75);
+            assert!(cube.max.z < BACK_Z);
+            assert!(cube.min.y > rear_row_top);
+            assert!(cube.max.y < ROOM_HEIGHT);
+        }
+    }
+
+    #[test]
+    fn projector_does_not_intersect_seats_or_initial_camera() {
+        let (scene, metadata) = built_scene();
+        let projector = required_projector(&metadata);
+        let projector_ids = projector.cube_ids();
+
+        for projector_id in &projector_ids {
+            let projector_cube = &scene.cubes()[*projector_id];
+            assert!(!point_inside_cube(INITIAL_CAMERA_POSITION, projector_cube));
+
+            for seat in metadata.seats() {
+                for seat_cube_id in seat.cube_ids() {
+                    assert!(
+                        !cubes_overlap(projector_cube, &scene.cubes()[seat_cube_id]),
+                        "projector cube {projector_id} overlaps seat cube {seat_cube_id}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn projector_lens_is_separated_and_points_to_screen_center() {
+        let (scene, metadata) = built_scene();
+        let projector = required_projector(&metadata);
+        let body_id = projector.cube_ids_for(ProjectorPart::Body)[0];
+        let lens_id = projector.cube_ids_for(ProjectorPart::Lens)[0];
+        let body = &scene.cubes()[body_id];
+        let lens = &scene.cubes()[lens_id];
+        let direction = (projector.screen_center - projector.lens_position).normalized();
+
+        assert!(lens.max.z < body.min.z);
+        assert_finite_vec3(projector.lens_position);
+        assert_finite_vec3(projector.screen_center);
+        assert_finite_vec3(direction);
+        assert!((direction.length() - 1.0).abs() < 0.0001);
+        assert!(direction.z < 0.0);
+        assert!(direction.y < 0.0);
+        assert!(direction.x > 0.0);
+
+        let lens_forward = Vec3::new(0.0, 0.0, -1.0);
+        assert!(direction.dot(lens_forward) > 0.92);
+    }
+
+    #[test]
+    fn ray_from_projector_lens_hits_screen_first() {
+        let (scene, metadata) = built_scene();
+        let projector = required_projector(&metadata);
+        let screen_id = metadata.cube_ids(CinemaElement::Screen)[0];
+        let screen_material_id = scene.cubes()[screen_id].material_id;
+        let ray = Ray::new(
+            projector.lens_position,
+            projector.screen_center - projector.lens_position,
+        );
+        let hit = scene.intersect(&ray, 0.001, 100.0);
+
+        assert!(hit.is_some());
+        if let Some(hit) = hit {
+            assert_eq!(hit.material_id, screen_material_id);
+        }
+    }
+
+    #[test]
+    fn cinema_lighting_keeps_cold_screen_fill_and_warm_accents() {
+        let (scene, metadata) = built_scene();
+        let screen_id = metadata.cube_ids(CinemaElement::Screen)[0];
+        let screen_material = scene
+            .material(scene.cubes()[screen_id].material_id)
+            .unwrap();
+        let cold_lights = scene
+            .lights()
+            .iter()
+            .filter(|light| light.color.b > light.color.r && light.color.b >= light.color.g)
+            .count();
+        let warm_lights = scene
+            .lights()
+            .iter()
+            .filter(|light| light.color.r >= light.color.g && light.color.g > light.color.b)
+            .count();
+
+        assert_ne!(screen_material.emission, Color::BLACK);
+        assert!(cold_lights >= 2);
+        assert!(warm_lights >= 2);
+        assert!(scene.lights().len() <= 6);
+
+        for light in scene.lights() {
+            assert_finite_vec3(light.position);
+            assert!(light.color.r.is_finite());
+            assert!(light.color.g.is_finite());
+            assert!(light.color.b.is_finite());
+            assert!(light.intensity.is_finite());
+            assert!(light.intensity >= 0.0);
+        }
+    }
+
+    #[test]
+    fn after_show_details_include_all_required_categories() {
+        let (_, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+
+        assert_eq!(after_show.pieces().len(), AFTER_SHOW_DETAIL_CUBE_COUNT);
+        assert!(after_show.count(AfterShowDetail::PopcornBox) >= 4);
+        assert_eq!(after_show.count(AfterShowDetail::FallenCup), 3);
+        assert_eq!(after_show.count(AfterShowDetail::SodaSpill), 3);
+        assert_eq!(after_show.count(AfterShowDetail::DiscardedCan), 3);
+        assert_eq!(after_show.count(AfterShowDetail::Ticket), TICKET_COUNT);
+        assert!(after_show.count(AfterShowDetail::Wrapper) >= 2);
+    }
+
+    #[test]
+    fn popcorn_box_uses_textured_cardboard() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+        let box_ids = after_show.cube_ids_for(AfterShowDetail::PopcornBox);
+
+        assert!(!box_ids.is_empty());
+        for cube_id in box_ids {
+            let cube = &scene.cubes()[cube_id];
+            assert_positive_finite_dimensions(cube);
+            assert_eq!(cube.material_id, after_show.popcorn_box_material_id);
+        }
+
+        let cardboard = scene.material(after_show.popcorn_box_material_id).unwrap();
+        assert!(cardboard.texture_id.is_some());
+        assert!(scene.texture(cardboard.texture_id.unwrap()).is_some());
+    }
+
+    #[test]
+    fn scattered_popcorn_is_grouped_near_box_and_reuses_material() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+        let popcorn_ids = after_show.cube_ids_for(AfterShowDetail::PopcornKernel);
+        let box_ids = after_show.cube_ids_for(AfterShowDetail::PopcornBox);
+        let box_center = average_center(&scene, &box_ids);
+        let mut centers = Vec::new();
+
+        assert!(popcorn_ids.len() >= MIN_POPCORN_KERNELS);
+        assert!(popcorn_ids.len() <= MAX_POPCORN_KERNELS);
+
+        for cube_id in popcorn_ids {
+            let cube = &scene.cubes()[cube_id];
+            let center = cube_center(cube);
+
+            assert_eq!(cube.material_id, after_show.popcorn_kernel_material_id);
+            assert!((center - box_center).length() < 0.75);
+            assert!(!centers.iter().any(|known: &Vec3| known.approx_eq(center)));
+            centers.push(center);
+        }
+    }
+
+    #[test]
+    fn fallen_cup_uses_transparent_plastic_and_valid_refraction() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+        let cup_ids = after_show.cube_ids_for(AfterShowDetail::FallenCup);
+        let cup_material = scene.material(after_show.cup_material_id).unwrap();
+
+        assert_eq!(cup_ids.len(), 3);
+        assert!(cup_material.transparency > 0.7);
+        assert!(cup_material.refractive_index >= 1.49);
+
+        for cube_id in cup_ids {
+            let cube = &scene.cubes()[cube_id];
+            assert_eq!(cube.material_id, after_show.cup_material_id);
+            assert_positive_finite_dimensions(cube);
+        }
+    }
+
+    #[test]
+    fn soda_spill_is_near_cup_slightly_above_floor_and_reflective() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+        let spill_ids = after_show.cube_ids_for(AfterShowDetail::SodaSpill);
+        let cup_ids = after_show.cube_ids_for(AfterShowDetail::FallenCup);
+        let cup_center = average_center(&scene, &cup_ids);
+        let spill_material = scene.material(after_show.spill_material_id).unwrap();
+
+        assert_eq!(spill_ids.len(), 3);
+        assert!((0.10..=0.40).contains(&spill_material.reflectivity));
+        assert!(spill_material.transparency <= 0.20);
+
+        for cube_id in spill_ids {
+            let cube = &scene.cubes()[cube_id];
+
+            assert_eq!(cube.material_id, after_show.spill_material_id);
+            assert!(cube.min.y > FLOOR_Y);
+            assert!(cube.min.y > FLOOR_Y + 0.10);
+            assert!((cube_center(cube) - cup_center).length() < 0.85);
+        }
+    }
+
+    #[test]
+    fn discarded_can_uses_metal_material() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+        let can_ids = after_show.cube_ids_for(AfterShowDetail::DiscardedCan);
+        let metal_material = scene.material(after_show.can_material_id).unwrap();
+
+        assert_eq!(can_ids.len(), 3);
+        assert!(metal_material.reflectivity > 0.7);
+
+        for cube_id in can_ids {
+            let cube = &scene.cubes()[cube_id];
+            assert_eq!(cube.material_id, after_show.can_material_id);
+            assert_positive_finite_dimensions(cube);
+        }
+    }
+
+    #[test]
+    fn tickets_and_wrappers_are_distinct_paper_details() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+        let ticket_ids = after_show.cube_ids_for(AfterShowDetail::Ticket);
+        let wrapper_ids = after_show.cube_ids_for(AfterShowDetail::Wrapper);
+
+        assert_eq!(ticket_ids.len(), TICKET_COUNT);
+        assert_eq!(wrapper_ids.len(), WRAPPER_COUNT);
+
+        for cube_id in ticket_ids.iter().chain(wrapper_ids.iter()) {
+            let cube = &scene.cubes()[*cube_id];
+            assert_eq!(cube.material_id, after_show.paper_material_id);
+            assert_positive_finite_dimensions(cube);
+        }
+
+        let ticket_width = cube_dimensions(&scene.cubes()[ticket_ids[0]]).x;
+        let wrapper_width = cube_dimensions(&scene.cubes()[wrapper_ids[0]]).x;
+        assert!(ticket_width >= wrapper_width);
+    }
+
+    #[test]
+    fn after_show_details_are_inside_room_and_above_floor() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+
+        for cube_id in after_show.cube_ids() {
+            let cube = &scene.cubes()[cube_id];
+
+            assert_positive_finite_dimensions(cube);
+            assert!(cube.min.y >= FLOOR_Y);
+            assert!(cube.max.y < ROOM_HEIGHT);
+            assert!(cube.min.x > -HALF_ROOM_WIDTH);
+            assert!(cube.max.x < HALF_ROOM_WIDTH);
+            assert!(cube.min.z > FRONT_Z);
+            assert!(cube.max.z < BACK_Z);
+            assert!(scene.material(cube.material_id).is_some());
+        }
+    }
+
+    #[test]
+    fn after_show_details_keep_central_aisle_passable_and_avoid_seats() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+
+        for detail_id in after_show.cube_ids() {
+            let detail = &scene.cubes()[detail_id];
+
+            assert!(
+                detail.max.x <= -AISLE_CLEAR_HALF_WIDTH || detail.min.x >= AISLE_CLEAR_HALF_WIDTH
+            );
+
+            for seat in metadata.seats() {
+                for seat_cube_id in seat.cube_ids() {
+                    assert!(
+                        !cubes_overlap(detail, &scene.cubes()[seat_cube_id]),
+                        "after-show detail cube {detail_id} overlaps seat cube {seat_cube_id}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn after_show_details_preserve_projector_path_and_scene_budget() {
+        let (scene, metadata) = built_scene();
+        let projector = required_projector(&metadata);
+        let screen_id = metadata.cube_ids(CinemaElement::Screen)[0];
+        let screen_material_id = scene.cubes()[screen_id].material_id;
+        let ray = Ray::new(
+            projector.lens_position,
+            projector.screen_center - projector.lens_position,
+        );
+        let hit = scene.intersect(&ray, 0.001, 100.0);
+
+        assert!(scene.cubes().len() < MAX_REASONABLE_CINEMA_CUBES);
+        assert!(hit.is_some());
+        if let Some(hit) = hit {
+            assert_eq!(hit.material_id, screen_material_id);
+        }
+    }
+
+    #[test]
+    fn after_show_materials_are_valid_without_extra_textures() {
+        let (scene, metadata) = built_scene();
+        let after_show = required_after_show(&metadata);
+
+        for material_id in [
+            after_show.popcorn_kernel_material_id,
+            after_show.spill_material_id,
+            after_show.paper_material_id,
+        ] {
+            let material = scene.material(material_id).unwrap();
+
+            assert!(material.texture_id.is_none());
+            assert!((0.0..=1.0).contains(&material.specular_strength));
+            assert!((0.0..=1.0).contains(&material.reflectivity));
+            assert!((0.0..=1.0).contains(&material.transparency));
+            assert!(material.refractive_index >= 1.0);
+            assert!(material.shininess.is_finite());
+        }
+
+        assert_eq!(scene.textures().len(), metadata.textured_material_count());
     }
 
     #[test]
