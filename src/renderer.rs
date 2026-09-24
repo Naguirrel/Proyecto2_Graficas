@@ -11,6 +11,7 @@ use crate::{
     scene::Scene,
     texture::FALLBACK_TEXTURE_COLOR,
 };
+use rayon::prelude::*;
 
 #[cfg(test)]
 use std::cell::Cell;
@@ -42,14 +43,67 @@ pub fn render_background(framebuffer: &mut Framebuffer) {
 }
 
 pub fn render_scene(framebuffer: &mut Framebuffer, camera: &Camera, scene: &Scene) {
-    framebuffer.clear(Color::BLACK);
+    let width = framebuffer.width();
+    let height = framebuffer.height();
+    let expected_pixels = width
+        .checked_mul(height)
+        .expect("framebuffer dimensions overflowed usize");
 
-    for y in 0..framebuffer.height() {
-        for x in 0..framebuffer.width() {
-            let ray = camera.ray_for_pixel(x, y, framebuffer.width(), framebuffer.height());
-            let color = trace_ray(scene, &ray, 0);
+    assert_eq!(
+        framebuffer.pixels().len(),
+        expected_pixels,
+        "framebuffer pixel buffer must match dimensions before rendering"
+    );
 
-            framebuffer.set_pixel(x, y, color);
+    framebuffer
+        .pixels_mut()
+        .par_chunks_mut(width.max(1))
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, pixel) in row.iter_mut().enumerate() {
+                *pixel = render_pixel(camera, scene, x, y, width, height);
+            }
+        });
+}
+
+fn render_pixel(
+    camera: &Camera,
+    scene: &Scene,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> u32 {
+    render_pixel_color(camera, scene, x, y, width, height).to_u32()
+}
+
+fn render_pixel_color(
+    camera: &Camera,
+    scene: &Scene,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+) -> Color {
+    let ray = camera.ray_for_pixel(x, y, width, height);
+
+    trace_ray(scene, &ray, 0)
+}
+
+#[cfg(test)]
+fn render_scene_sequential(framebuffer: &mut Framebuffer, camera: &Camera, scene: &Scene) {
+    let width = framebuffer.width();
+    let height = framebuffer.height();
+    let expected_pixels = width
+        .checked_mul(height)
+        .expect("framebuffer dimensions overflowed usize");
+
+    assert_eq!(framebuffer.pixels().len(), expected_pixels);
+
+    for y in 0..height {
+        for x in 0..width {
+            framebuffer.pixels_mut()[y * width + x] =
+                render_pixel(camera, scene, x, y, width, height);
         }
     }
 }
@@ -418,9 +472,9 @@ mod tests {
     use super::{
         CompositionWeights, MAX_RECURSION_DEPTH, RAY_EPSILON, background_color,
         background_color_for_scene, is_light_visible, material_texel, reflected_ray, refract,
-        refracted_ray, render_background, render_scene, reset_secondary_ray_count, sample_scene,
-        secondary_ray_count, shade_hit, shade_hit_with_albedo, trace_primary_ray, trace_ray,
-        trace_refraction,
+        refracted_ray, render_background, render_pixel_color, render_scene,
+        render_scene_sequential, reset_secondary_ray_count, sample_scene, secondary_ray_count,
+        shade_hit, shade_hit_with_albedo, trace_primary_ray, trace_ray, trace_refraction,
     };
     use crate::{
         camera::{Camera, OrbitCamera},
@@ -2229,5 +2283,240 @@ mod tests {
         assert_eq!(framebuffer.width(), 48);
         assert_eq!(framebuffer.height(), 36);
         assert_eq!(framebuffer.pixels().len(), 48 * 36);
+    }
+
+    fn render_parallel_and_sequential(
+        scene: &Scene,
+        camera: &Camera,
+        width: usize,
+        height: usize,
+    ) -> (Framebuffer, Framebuffer) {
+        let mut parallel = Framebuffer::new(width, height);
+        let mut sequential = Framebuffer::new(width, height);
+
+        render_scene(&mut parallel, camera, scene);
+        render_scene_sequential(&mut sequential, camera, scene);
+
+        (parallel, sequential)
+    }
+
+    fn assert_parallel_matches_sequential(
+        scene: &Scene,
+        camera: &Camera,
+        width: usize,
+        height: usize,
+    ) {
+        let (parallel, sequential) = render_parallel_and_sequential(scene, camera, width, height);
+
+        assert_eq!(parallel.width(), width);
+        assert_eq!(parallel.height(), height);
+        assert_eq!(parallel.pixels(), sequential.pixels());
+    }
+
+    fn front_camera(aspect_ratio: f32) -> Camera {
+        Camera::new(
+            Vec3::new(0.0, 0.0, 4.0),
+            Vec3::ZERO,
+            Vec3::new(0.0, 1.0, 0.0),
+            55.0,
+            aspect_ratio,
+        )
+    }
+
+    fn scene_with_lit_shadow() -> Scene {
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.0, -1.0, -1.0),
+                Vec3::new(1.0, 1.0, 1.0),
+                0,
+            ))
+            .unwrap();
+        scene.add_cube(occluder(0)).unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+        scene
+    }
+
+    fn textured_cube_scene() -> Scene {
+        let mut scene = Scene::new();
+        let texture_id = scene.add_texture(corner_texture());
+        let material_id = scene
+            .add_material(Material::diffuse(Color::WHITE).with_texture(
+                texture_id,
+                Vec2::new(1.0, 1.0),
+                WrapMode::Clamp,
+            ))
+            .unwrap();
+        scene.set_ambient_light(Color::WHITE);
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-2.0, -2.0, -1.0),
+                Vec3::new(2.0, 2.0, 1.0),
+                material_id,
+            ))
+            .unwrap();
+        scene
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_for_empty_scene_background() {
+        let scene = Scene::new();
+        let camera = front_camera(4.0 / 3.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 17, 11);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_geometry() {
+        let scene = scene_with_main_cube();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 19, 13);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_shadows() {
+        let scene = scene_with_lit_shadow();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 13, 9);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_reflection() {
+        let scene = reflection_target_scene(1.0, true);
+        let camera = Camera::new(
+            Vec3::new(0.0, 3.0, 3.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            45.0,
+            1.0,
+        );
+
+        assert_parallel_matches_sequential(&scene, &camera, 11, 7);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_refraction() {
+        let scene = transparent_target_scene(true);
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 11, 7);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_skybox() {
+        let mut scene = Scene::new();
+        scene.set_skybox(cardinal_skybox());
+        let camera = Camera::new(
+            Vec3::ZERO,
+            Vec3::new(1.0, 0.1, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            60.0,
+            4.0 / 3.0,
+        );
+
+        assert_parallel_matches_sequential(&scene, &camera, 16, 10);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_textures_and_uvs() {
+        let scene = textured_cube_scene();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 21, 15);
+    }
+
+    #[test]
+    fn parallel_render_supports_height_not_divisible_by_threads() {
+        let scene = scene_with_main_cube();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 10, 7);
+    }
+
+    #[test]
+    fn parallel_render_supports_tiny_dimensions() {
+        let scene = Scene::new();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 1, 1);
+    }
+
+    #[test]
+    fn parallel_render_supports_single_row_framebuffer() {
+        let scene = scene_with_main_cube();
+        let camera = front_camera(8.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 8, 1);
+    }
+
+    #[test]
+    fn parallel_render_overwrites_every_pixel_with_valid_colors() {
+        let scene = Scene::new();
+        let camera = front_camera(4.0 / 3.0);
+        let mut framebuffer = Framebuffer::new(23, 17);
+
+        framebuffer.pixels_mut().fill(0xffff_ffff);
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert!(
+            framebuffer
+                .pixels()
+                .iter()
+                .all(|&pixel| pixel <= 0x00ff_ffff)
+        );
+    }
+
+    #[test]
+    fn pixel_color_is_finite_before_conversion() {
+        let scene = textured_cube_scene();
+        let camera = front_camera(1.0);
+        let color = render_pixel_color(&camera, &scene, 3, 4, 9, 9);
+
+        assert_finite_unit_color(color);
+    }
+
+    #[test]
+    fn interactive_framebuffer_size_renders_in_parallel() {
+        let scene = Scene::new();
+        let camera = front_camera(4.0 / 3.0);
+        let mut framebuffer = Framebuffer::new(400, 300);
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert_eq!(framebuffer.width(), 400);
+        assert_eq!(framebuffer.height(), 300);
+        assert_eq!(framebuffer.pixels().len(), 120_000);
+        assert!(
+            framebuffer
+                .pixels()
+                .iter()
+                .all(|&pixel| pixel <= 0x00ff_ffff)
+        );
+    }
+
+    #[test]
+    fn full_framebuffer_size_renders_in_parallel() {
+        let scene = Scene::new();
+        let camera = front_camera(4.0 / 3.0);
+        let mut framebuffer = Framebuffer::new(800, 600);
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert_eq!(framebuffer.width(), 800);
+        assert_eq!(framebuffer.height(), 600);
+        assert_eq!(framebuffer.pixels().len(), 480_000);
+        assert!(
+            framebuffer
+                .pixels()
+                .iter()
+                .all(|&pixel| pixel <= 0x00ff_ffff)
+        );
     }
 }

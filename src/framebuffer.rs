@@ -31,6 +31,10 @@ impl Framebuffer {
         &self.pixels
     }
 
+    pub fn pixels_mut(&mut self) -> &mut [u32] {
+        &mut self.pixels
+    }
+
     pub fn resize(&mut self, width: usize, height: usize) {
         let pixel_count = width
             .checked_mul(height)
@@ -146,6 +150,18 @@ mod tests {
         framebuffer.set_pixel(0, 2, Color::WHITE);
 
         assert_eq!(framebuffer.pixels(), before.as_slice());
+    }
+
+    #[test]
+    fn pixels_mut_allows_safe_slice_updates() {
+        let mut framebuffer = Framebuffer::new(2, 2);
+        let color = Color::rgb(0.1, 0.2, 0.3).to_u32();
+
+        framebuffer.pixels_mut()[2] = color;
+
+        assert_eq!(framebuffer.pixels()[2], color);
+        assert_eq!(framebuffer.width(), 2);
+        assert_eq!(framebuffer.height(), 2);
     }
 
     #[test]

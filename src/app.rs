@@ -48,6 +48,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     window.set_target_fps(60);
     print_controls();
+    print_rayon_threads();
     let mut camera = orbit_camera.to_camera();
     let mut render_state = InteractiveRenderState::new();
     let mut last_frame = Instant::now();
@@ -116,6 +117,10 @@ fn print_controls() {
     println!("  Q/E: zoom");
     println!("  R: reiniciar");
     println!("  Escape: salir");
+}
+
+fn print_rayon_threads() {
+    println!("Rayon threads: {}", rayon::current_num_threads());
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
