@@ -1,6 +1,6 @@
 use crate::{
     color::Color, cube::Cube, intersection::Intersection, light::PointLight, material::Material,
-    ray::Ray, skybox::Skybox, texture::Texture,
+    primitive::Primitive, ray::Ray, skybox::Skybox, sphere::Sphere, texture::Texture,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,7 +11,7 @@ pub enum SceneError {
 
 #[derive(Debug)]
 pub struct Scene {
-    cubes: Vec<Cube>,
+    objects: Vec<Primitive>,
     materials: Vec<Material>,
     textures: Vec<Texture>,
     lights: Vec<PointLight>,
@@ -43,13 +43,21 @@ impl Scene {
     }
 
     pub fn add_cube(&mut self, cube: Cube) -> Result<(), SceneError> {
-        if self.material(cube.material_id).is_none() {
-            return Err(SceneError::MissingMaterial {
-                material_id: cube.material_id,
-            });
+        self.add_primitive(cube.into())
+    }
+
+    pub fn add_sphere(&mut self, sphere: Sphere) -> Result<(), SceneError> {
+        self.add_primitive(sphere.into())
+    }
+
+    pub fn add_primitive(&mut self, primitive: Primitive) -> Result<(), SceneError> {
+        let material_id = primitive.material_id();
+
+        if self.material(material_id).is_none() {
+            return Err(SceneError::MissingMaterial { material_id });
         }
 
-        self.cubes.push(cube);
+        self.objects.push(primitive);
         Ok(())
     }
 
@@ -73,8 +81,31 @@ impl Scene {
         self.textures.get(texture_id)
     }
 
-    pub fn cubes(&self) -> &[Cube] {
-        &self.cubes
+    pub fn objects(&self) -> &[Primitive] {
+        &self.objects
+    }
+
+    /// Iterates over cube primitives only, without allocating a temporary list.
+    pub fn cubes(&self) -> impl Iterator<Item = &Cube> {
+        self.objects.iter().filter_map(Primitive::as_cube)
+    }
+
+    pub fn object_count(&self) -> usize {
+        self.objects.len()
+    }
+
+    pub fn cube_count(&self) -> usize {
+        self.objects
+            .iter()
+            .filter(|primitive| primitive.as_cube().is_some())
+            .count()
+    }
+
+    pub fn sphere_count(&self) -> usize {
+        self.objects
+            .iter()
+            .filter(|primitive| primitive.as_sphere().is_some())
+            .count()
     }
 
     pub fn materials(&self) -> &[Material] {
@@ -101,8 +132,8 @@ impl Scene {
         let mut closest = t_max;
         let mut closest_hit = None;
 
-        for cube in &self.cubes {
-            if let Some(hit) = cube.intersect(ray, t_min, closest) {
+        for primitive in &self.objects {
+            if let Some(hit) = primitive.intersect(ray, t_min, closest) {
                 closest = hit.distance;
                 closest_hit = Some(hit);
             }
@@ -115,7 +146,7 @@ impl Scene {
 impl Default for Scene {
     fn default() -> Self {
         Self {
-            cubes: Vec::new(),
+            objects: Vec::new(),
             materials: Vec::new(),
             textures: Vec::new(),
             lights: Vec::new(),
@@ -134,8 +165,10 @@ mod tests {
         light::PointLight,
         material::Material,
         math::{Vec2, Vec3},
+        primitive::Primitive,
         ray::Ray,
         skybox::Skybox,
+        sphere::Sphere,
         texture::{Texture, WrapMode},
     };
 
@@ -149,11 +182,26 @@ mod tests {
         Texture::new(1, 1, vec![Color::WHITE]).unwrap()
     }
 
+    fn unit_cube(material_id: usize) -> Cube {
+        Cube::new(
+            Vec3::new(-1.0, -1.0, -1.0),
+            Vec3::new(1.0, 1.0, 1.0),
+            material_id,
+        )
+    }
+
+    fn unit_sphere(material_id: usize) -> Sphere {
+        Sphere::new(Vec3::ZERO, 1.0, material_id).unwrap()
+    }
+
     #[test]
     fn new_scene_starts_empty() {
         let scene = Scene::new();
 
-        assert!(scene.cubes().is_empty());
+        assert!(scene.objects().is_empty());
+        assert_eq!(scene.object_count(), 0);
+        assert_eq!(scene.cube_count(), 0);
+        assert_eq!(scene.sphere_count(), 0);
         assert!(scene.materials().is_empty());
         assert!(scene.textures().is_empty());
         assert!(scene.lights().is_empty());
@@ -165,7 +213,10 @@ mod tests {
         let new_scene = Scene::new();
         let default_scene = Scene::default();
 
-        assert_eq!(default_scene.cubes(), new_scene.cubes());
+        assert_eq!(default_scene.objects(), new_scene.objects());
+        assert_eq!(default_scene.object_count(), new_scene.object_count());
+        assert_eq!(default_scene.cube_count(), new_scene.cube_count());
+        assert_eq!(default_scene.sphere_count(), new_scene.sphere_count());
         assert_eq!(default_scene.materials(), new_scene.materials());
         assert_eq!(default_scene.textures(), new_scene.textures());
         assert_eq!(default_scene.lights(), new_scene.lights());
@@ -297,22 +348,75 @@ mod tests {
     #[test]
     fn adding_cube_with_valid_material_succeeds() {
         let mut scene = diffuse_scene();
-        let cube = Cube::new(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0), 0);
+        let cube = unit_cube(0);
 
         assert_eq!(scene.add_cube(cube), Ok(()));
-        assert_eq!(scene.cubes().len(), 1);
+        assert_eq!(scene.object_count(), 1);
+        assert_eq!(scene.cube_count(), 1);
+        assert_eq!(scene.sphere_count(), 0);
+        assert_eq!(scene.objects()[0].as_cube(), Some(&cube));
+        assert_eq!(scene.cubes().count(), 1);
+    }
+
+    #[test]
+    fn adding_sphere_with_valid_material_succeeds() {
+        let mut scene = diffuse_scene();
+        let sphere = unit_sphere(0);
+
+        assert_eq!(scene.add_sphere(sphere), Ok(()));
+        assert_eq!(scene.object_count(), 1);
+        assert_eq!(scene.cube_count(), 0);
+        assert_eq!(scene.sphere_count(), 1);
+        assert_eq!(scene.objects()[0].as_sphere(), Some(&sphere));
+    }
+
+    #[test]
+    fn add_primitive_accepts_cube_and_sphere() {
+        let mut scene = diffuse_scene();
+
+        assert_eq!(scene.add_primitive(Primitive::from(unit_cube(0))), Ok(()));
+        assert_eq!(scene.add_primitive(Primitive::from(unit_sphere(0))), Ok(()));
+        assert_eq!(scene.object_count(), 2);
+        assert_eq!(scene.cube_count(), 1);
+        assert_eq!(scene.sphere_count(), 1);
     }
 
     #[test]
     fn adding_cube_with_invalid_material_returns_error() {
         let mut scene = Scene::new();
-        let cube = Cube::new(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0), 3);
+        let cube = unit_cube(3);
 
         assert_eq!(
             scene.add_cube(cube),
             Err(SceneError::MissingMaterial { material_id: 3 })
         );
-        assert!(scene.cubes().is_empty());
+        assert_eq!(scene.object_count(), 0);
+    }
+
+    #[test]
+    fn adding_sphere_with_invalid_material_returns_error() {
+        let mut scene = Scene::new();
+        let sphere = unit_sphere(3);
+
+        assert_eq!(
+            scene.add_sphere(sphere),
+            Err(SceneError::MissingMaterial { material_id: 3 })
+        );
+        assert_eq!(scene.object_count(), 0);
+    }
+
+    #[test]
+    fn failed_add_primitive_does_not_modify_scene() {
+        let mut scene = diffuse_scene();
+        scene.add_cube(unit_cube(0)).unwrap();
+
+        assert_eq!(
+            scene.add_primitive(Primitive::from(unit_sphere(9))),
+            Err(SceneError::MissingMaterial { material_id: 9 })
+        );
+        assert_eq!(scene.object_count(), 1);
+        assert_eq!(scene.cube_count(), 1);
+        assert_eq!(scene.sphere_count(), 0);
     }
 
     #[test]
@@ -325,50 +429,74 @@ mod tests {
     #[test]
     fn scene_intersection_finds_cube() {
         let mut scene = diffuse_scene();
-        scene
-            .add_cube(Cube::new(
-                Vec3::new(-1.0, -1.0, -1.0),
-                Vec3::new(1.0, 1.0, 1.0),
-                0,
-            ))
-            .unwrap();
+        scene.add_cube(unit_cube(0)).unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
 
         assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
     }
 
     #[test]
-    fn scene_intersection_selects_closest_hit() {
+    fn scene_intersection_finds_sphere() {
         let mut scene = diffuse_scene();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn mixed_scene_returns_cube_when_cube_is_closest() {
+        let mut scene = diffuse_scene();
+        let cube_id = scene
+            .add_material(Material::diffuse(Color::new(1.0, 0.0, 0.0)))
+            .unwrap();
         scene
-            .add_cube(Cube::new(
-                Vec3::new(-0.5, -0.5, -2.0),
-                Vec3::new(0.5, 0.5, -1.0),
-                0,
-            ))
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -3.0), 0.5, 0).unwrap())
             .unwrap();
         scene
             .add_cube(Cube::new(
                 Vec3::new(-0.5, -0.5, 1.0),
                 Vec3::new(0.5, 0.5, 2.0),
-                0,
+                cube_id,
             ))
             .unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
         let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
 
-        assert!((hit.distance - 2.0).abs() < 0.0001);
+        assert_eq!(hit.material_id, cube_id);
+    }
+
+    #[test]
+    fn mixed_scene_returns_sphere_when_sphere_is_closest() {
+        let mut scene = diffuse_scene();
+        let sphere_id = scene
+            .add_material(Material::diffuse(Color::new(1.0, 0.0, 0.0)))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.5, -0.5, -3.0),
+                Vec3::new(0.5, 0.5, -2.0),
+                0,
+            ))
+            .unwrap();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, 1.5), 0.5, sphere_id).unwrap())
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.material_id, sphere_id);
     }
 
     #[test]
     fn insertion_order_does_not_change_closest_hit() {
         let mut first = diffuse_scene();
         let mut second = diffuse_scene();
-        let near = Cube::new(Vec3::new(-0.5, -0.5, 1.0), Vec3::new(0.5, 0.5, 2.0), 0);
-        let far = Cube::new(Vec3::new(-0.5, -0.5, -2.0), Vec3::new(0.5, 0.5, -1.0), 0);
+        let near = Sphere::new(Vec3::new(0.0, 0.0, 1.5), 0.5, 0).unwrap();
+        let far = Cube::new(Vec3::new(-0.5, -0.5, -3.0), Vec3::new(0.5, 0.5, -2.0), 0);
         first.add_cube(far).unwrap();
-        first.add_cube(near).unwrap();
-        second.add_cube(near).unwrap();
+        first.add_sphere(near).unwrap();
+        second.add_sphere(near).unwrap();
         second.add_cube(far).unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
 
@@ -381,13 +509,7 @@ mod tests {
     #[test]
     fn intersection_respects_t_min_and_t_max() {
         let mut scene = diffuse_scene();
-        scene
-            .add_cube(Cube::new(
-                Vec3::new(-1.0, -1.0, -1.0),
-                Vec3::new(1.0, 1.0, 1.0),
-                0,
-            ))
-            .unwrap();
+        scene.add_sphere(unit_sphere(0)).unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
 
         assert!(scene.intersect(&ray, 0.001, 1.0).is_none());
@@ -428,16 +550,44 @@ mod tests {
     #[test]
     fn scene_intersection_preserves_cube_uv() {
         let mut scene = diffuse_scene();
-        scene
-            .add_cube(Cube::new(
-                Vec3::new(-1.0, -1.0, -1.0),
-                Vec3::new(1.0, 1.0, 1.0),
-                0,
-            ))
-            .unwrap();
+        scene.add_cube(unit_cube(0)).unwrap();
         let ray = Ray::new(Vec3::new(0.5, 0.25, 3.0), Vec3::new(0.0, 0.0, -1.0));
         let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
 
         assert!(hit.uv.approx_eq(Vec2::new(0.75, 0.625)));
+    }
+
+    #[test]
+    fn scene_intersection_preserves_sphere_uv() {
+        let mut scene = diffuse_scene();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        let ray = Ray::new(Vec3::new(3.0, 0.0, 0.0), Vec3::new(-1.0, 0.0, 0.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert!(hit.uv.approx_eq(Vec2::new(0.5, 0.5)));
+    }
+
+    #[test]
+    fn ray_missing_all_primitives_returns_none() {
+        let mut scene = diffuse_scene();
+        scene.add_cube(unit_cube(0)).unwrap();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(4.0, 0.0, 0.0), 1.0, 0).unwrap())
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 1.0, 0.0));
+
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_none());
+    }
+
+    #[test]
+    fn counts_do_not_modify_scene() {
+        let mut scene = diffuse_scene();
+        scene.add_cube(unit_cube(0)).unwrap();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        let objects_before = scene.object_count();
+
+        assert_eq!(scene.cube_count(), 1);
+        assert_eq!(scene.sphere_count(), 1);
+        assert_eq!(scene.object_count(), objects_before);
     }
 }

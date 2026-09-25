@@ -488,6 +488,7 @@ mod tests {
         ray::Ray,
         scene::Scene,
         skybox::Skybox,
+        sphere::Sphere,
         texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
     };
 
@@ -658,6 +659,16 @@ mod tests {
         scene
     }
 
+    fn front_sphere_scene(material: Material) -> Scene {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let material_id = scene.add_material(material).unwrap();
+        scene
+            .add_sphere(Sphere::new(Vec3::ZERO, 1.0, material_id).unwrap())
+            .unwrap();
+        scene
+    }
+
     fn front_ray() -> Ray {
         Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0))
     }
@@ -677,6 +688,23 @@ mod tests {
             Material::diffuse(Color::new(0.9, 0.1, 0.2))
         };
         let target_id = scene.add_material(target_material).unwrap();
+
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.65, -0.65, -2.5),
+                Vec3::new(0.65, 0.65, -1.5),
+                target_id,
+            ))
+            .unwrap();
+
+        scene
+    }
+
+    fn transparent_sphere_target_scene() -> Scene {
+        let mut scene = front_sphere_scene(transparent_material(1.0, 0.0));
+        let target_id = scene
+            .add_material(Material::diffuse(Color::new(0.9, 0.1, 0.2)))
+            .unwrap();
 
         scene
             .add_cube(Cube::new(
@@ -1447,6 +1475,139 @@ mod tests {
     }
 
     #[test]
+    fn opaque_sphere_receives_local_shading() {
+        let scene = front_sphere_scene(Material::diffuse(Color::new(0.2, 0.4, 0.6)));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.2, 0.4, 0.6),
+        );
+    }
+
+    #[test]
+    fn sphere_can_cast_shadow() {
+        let material = Material::new(Color::WHITE, 0.0, 1.0, 0.0, 0.0, 1.0, Color::BLACK);
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, 1.8), 0.25, 0).unwrap())
+            .unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_eq!(
+            shade_hit(&view_ray(), flat_hit(), material, &scene),
+            Color::BLACK
+        );
+    }
+
+    #[test]
+    fn reflective_sphere_uses_secondary_color() {
+        let mut scene = front_sphere_scene(reflective_material(1.0));
+        scene.set_skybox(solid_skybox(Color::new(0.3, 0.6, 0.9)));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.3, 0.6, 0.9),
+        );
+    }
+
+    #[test]
+    fn transparent_sphere_refracts_to_background() {
+        let scene = front_sphere_scene(transparent_material(1.0, 0.0));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            background_color(front_ray().direction),
+        );
+    }
+
+    #[test]
+    fn textured_sphere_uses_spherical_uvs() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let texture_id = scene.add_texture(
+            Texture::new(
+                1,
+                2,
+                vec![Color::new(0.0, 1.0, 0.0), Color::new(1.0, 0.0, 0.0)],
+            )
+            .unwrap(),
+        );
+        let material_id = scene
+            .add_material(Material::diffuse(Color::WHITE).with_texture(
+                texture_id,
+                Vec2::new(1.0, 1.0),
+                WrapMode::Clamp,
+            ))
+            .unwrap();
+        scene
+            .add_sphere(Sphere::new(Vec3::ZERO, 1.0, material_id).unwrap())
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 3.0, 0.0), Vec3::new(0.0, -1.0, 0.0));
+
+        assert_color_near(trace_ray(&scene, &ray, 0), Color::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn reflected_ray_can_hit_sphere() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let mirror_id = scene
+            .add_material(Material::new(
+                Color::BLACK,
+                0.0,
+                1.0,
+                1.0,
+                0.0,
+                1.0,
+                Color::BLACK,
+            ))
+            .unwrap();
+        let target_id = scene
+            .add_material(Material::diffuse(Color::new(0.9, 0.1, 0.2)))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.55, 0.0, -0.55),
+                Vec3::new(0.55, 1.0, 0.55),
+                mirror_id,
+            ))
+            .unwrap();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 1.75, -1.1), 0.5, target_id).unwrap())
+            .unwrap();
+
+        let color = trace_ray(&scene, &reflection_target_ray(), 0);
+
+        assert!(color.r > 0.8, "{color:?}");
+        assert!(color.g < 0.2, "{color:?}");
+        assert!(color.b < 0.3, "{color:?}");
+    }
+
+    #[test]
+    fn refracted_ray_can_hit_sphere() {
+        let scene = transparent_sphere_target_scene();
+
+        let color = trace_ray(&scene, &front_ray(), 0);
+
+        assert!(color.r > 0.8, "{color:?}");
+        assert!(color.g < 0.2, "{color:?}");
+        assert!(color.b < 0.3, "{color:?}");
+    }
+
+    #[test]
+    fn missed_sphere_does_not_change_background() {
+        let scene = front_sphere_scene(Material::diffuse(Color::WHITE));
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 1.0, 0.0));
+
+        assert_color_near(trace_ray(&scene, &ray, 0), background_color(ray.direction));
+    }
+
+    #[test]
     fn reflected_origin_is_offset_away_from_hit_surface() {
         let scene = front_cube_scene(1.0);
         let ray = front_ray();
@@ -1678,7 +1839,7 @@ mod tests {
     fn shaded_color_remains_in_display_range() {
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
         let scene = scene_with_main_cube();
-        let hit = scene.cubes()[0].intersect(&ray, 0.001, 100.0).unwrap();
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
         let color = shade_hit(&ray, hit, *scene.material(hit.material_id).unwrap(), &scene);
 
         assert!((0.0..=1.0).contains(&color.r));
@@ -2137,6 +2298,35 @@ mod tests {
     }
 
     #[test]
+    fn small_framebuffer_with_cube_and_sphere_keeps_dimensions() {
+        let scene = mixed_cube_sphere_scene();
+        let camera = front_camera(1.0);
+        let mut framebuffer = Framebuffer::new(9, 7);
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert_eq!(framebuffer.width(), 9);
+        assert_eq!(framebuffer.height(), 7);
+        assert_eq!(framebuffer.pixels().len(), 63);
+    }
+
+    #[test]
+    fn mixed_scene_render_contains_only_finite_colors() {
+        let scene = mixed_cube_sphere_scene();
+        let camera = front_camera(1.0);
+        let mut framebuffer = Framebuffer::new(9, 7);
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert!(
+            framebuffer
+                .pixels()
+                .iter()
+                .all(|&pixel| pixel <= 0x00ff_ffff)
+        );
+    }
+
+    #[test]
     fn orbit_camera_changes_visible_skybox_region() {
         let mut scene = Scene::new();
         scene.set_skybox(cardinal_skybox());
@@ -2363,6 +2553,28 @@ mod tests {
         scene
     }
 
+    fn mixed_cube_sphere_scene() -> Scene {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let cube_id = scene
+            .add_material(Material::diffuse(Color::new(0.2, 0.4, 0.8)))
+            .unwrap();
+        let sphere_id = scene
+            .add_material(Material::diffuse(Color::new(0.8, 0.3, 0.2)))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-1.45, -0.7, -0.5),
+                Vec3::new(-0.35, 0.7, 0.5),
+                cube_id,
+            ))
+            .unwrap();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.8, 0.0, 0.0), 0.65, sphere_id).unwrap())
+            .unwrap();
+        scene
+    }
+
     #[test]
     fn parallel_render_matches_sequential_for_empty_scene_background() {
         let scene = Scene::new();
@@ -2374,6 +2586,14 @@ mod tests {
     #[test]
     fn parallel_render_matches_sequential_with_geometry() {
         let scene = scene_with_main_cube();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 19, 13);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_mixed_geometry() {
+        let scene = mixed_cube_sphere_scene();
         let camera = front_camera(1.0);
 
         assert_parallel_matches_sequential(&scene, &camera, 19, 13);

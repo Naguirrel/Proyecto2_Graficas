@@ -8,6 +8,7 @@ pub mod intersection;
 pub mod light;
 pub mod material;
 pub mod math;
+pub mod primitive;
 pub mod ray;
 pub mod renderer;
 pub mod scene;
