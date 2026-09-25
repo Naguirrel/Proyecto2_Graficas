@@ -12,4 +12,5 @@ pub mod ray;
 pub mod renderer;
 pub mod scene;
 pub mod skybox;
+pub mod sphere;
 pub mod texture;
