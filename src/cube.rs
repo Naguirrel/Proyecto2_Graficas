@@ -13,6 +13,14 @@ pub struct Cube {
     pub material_id: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct BoxHit {
+    pub(crate) distance: f32,
+    pub(crate) position: Vec3,
+    pub(crate) normal: Vec3,
+    pub(crate) uv: Vec2,
+}
+
 impl Cube {
     pub fn new(first_corner: Vec3, second_corner: Vec3, material_id: usize) -> Self {
         Self {
@@ -34,93 +42,109 @@ impl Cube {
     /// Non-finite inputs, invalid intervals, and zero-direction rays return
     /// `None` so no hit can carry NaN or Inf values into later shading.
     pub fn intersect(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<Intersection> {
-        if !self.has_finite_bounds()
-            || !is_finite_vec3(ray.origin)
-            || !is_finite_vec3(ray.direction)
-            || ray.direction == Vec3::ZERO
-            || !t_min.is_finite()
-            || !t_max.is_finite()
-            || t_min > t_max
-        {
-            return None;
-        }
-
-        let mut entry_distance = f32::NEG_INFINITY;
-        let mut exit_distance = f32::INFINITY;
-        let mut entry_normal = Vec3::ZERO;
-        let mut exit_normal = Vec3::ZERO;
-
-        for axis in Axis::ALL {
-            let slab = slab_intersection(*axis, ray, self.min, self.max)?;
-
-            if slab.near_distance > entry_distance + SLAB_EPSILON {
-                entry_distance = slab.near_distance;
-                entry_normal = slab.near_normal;
-            }
-
-            if slab.far_distance < exit_distance - SLAB_EPSILON {
-                exit_distance = slab.far_distance;
-                exit_normal = slab.far_normal;
-            }
-
-            if entry_distance > exit_distance + SLAB_EPSILON {
-                return None;
-            }
-        }
-
-        let (distance, normal) =
-            if entry_distance >= t_min && entry_distance <= t_max && entry_distance.is_finite() {
-                (entry_distance, entry_normal)
-            } else if exit_distance >= t_min && exit_distance <= t_max && exit_distance.is_finite()
-            {
-                (exit_distance, exit_normal)
-            } else {
-                return None;
-            };
-
-        let position = ray.at(distance);
-
-        if !distance.is_finite() || !is_finite_vec3(position) || !is_finite_vec3(normal) {
-            return None;
-        }
+        let hit = intersect_box_bounds(ray, self.min, self.max, t_min, t_max)?;
 
         Some(Intersection::new(
-            distance,
-            position,
-            normal,
-            self.uv_at(position, normal),
+            hit.distance,
+            hit.position,
+            hit.normal,
+            hit.uv,
             self.material_id,
         ))
     }
+}
 
-    fn has_finite_bounds(&self) -> bool {
-        is_finite_vec3(self.min) && is_finite_vec3(self.max)
+pub(crate) fn intersect_box_bounds(
+    ray: &Ray,
+    min: Vec3,
+    max: Vec3,
+    t_min: f32,
+    t_max: f32,
+) -> Option<BoxHit> {
+    if !has_finite_bounds(min, max)
+        || !is_finite_vec3(ray.origin)
+        || !is_finite_vec3(ray.direction)
+        || ray.direction == Vec3::ZERO
+        || !t_min.is_finite()
+        || !t_max.is_finite()
+        || t_min > t_max
+    {
+        return None;
     }
 
-    /// UV orientation by face:
-    /// +X uses u=-Z, v=+Y. -X uses u=+Z, v=+Y.
-    /// +Y uses u=+X, v=-Z. -Y uses u=+X, v=+Z.
-    /// +Z uses u=+X, v=+Y. -Z uses u=-X, v=+Y.
-    fn uv_at(&self, position: Vec3, normal: Vec3) -> Vec2 {
-        let x = normalized_coordinate(position.x, self.min.x, self.max.x);
-        let y = normalized_coordinate(position.y, self.min.y, self.max.y);
-        let z = normalized_coordinate(position.z, self.min.z, self.max.z);
+    let mut entry_distance = f32::NEG_INFINITY;
+    let mut exit_distance = f32::INFINITY;
+    let mut entry_normal = Vec3::ZERO;
+    let mut exit_normal = Vec3::ZERO;
 
-        if normal == Vec3::new(1.0, 0.0, 0.0) {
-            Vec2::new(1.0 - z, y)
-        } else if normal == Vec3::new(-1.0, 0.0, 0.0) {
-            Vec2::new(z, y)
-        } else if normal == Vec3::new(0.0, 1.0, 0.0) {
-            Vec2::new(x, 1.0 - z)
-        } else if normal == Vec3::new(0.0, -1.0, 0.0) {
-            Vec2::new(x, z)
-        } else if normal == Vec3::new(0.0, 0.0, 1.0) {
-            Vec2::new(x, y)
-        } else if normal == Vec3::new(0.0, 0.0, -1.0) {
-            Vec2::new(1.0 - x, y)
-        } else {
-            Vec2::ZERO
+    for axis in Axis::ALL {
+        let slab = slab_intersection(*axis, ray, min, max)?;
+
+        if slab.near_distance > entry_distance + SLAB_EPSILON {
+            entry_distance = slab.near_distance;
+            entry_normal = slab.near_normal;
         }
+
+        if slab.far_distance < exit_distance - SLAB_EPSILON {
+            exit_distance = slab.far_distance;
+            exit_normal = slab.far_normal;
+        }
+
+        if entry_distance > exit_distance + SLAB_EPSILON {
+            return None;
+        }
+    }
+
+    let (distance, normal) =
+        if entry_distance >= t_min && entry_distance <= t_max && entry_distance.is_finite() {
+            (entry_distance, entry_normal)
+        } else if exit_distance >= t_min && exit_distance <= t_max && exit_distance.is_finite() {
+            (exit_distance, exit_normal)
+        } else {
+            return None;
+        };
+
+    let position = ray.at(distance);
+
+    if !distance.is_finite() || !is_finite_vec3(position) || !is_finite_vec3(normal) {
+        return None;
+    }
+
+    Some(BoxHit {
+        distance,
+        position,
+        normal,
+        uv: box_uv_at(position, normal, min, max),
+    })
+}
+
+fn has_finite_bounds(min: Vec3, max: Vec3) -> bool {
+    is_finite_vec3(min) && is_finite_vec3(max)
+}
+
+/// UV orientation by face:
+/// +X uses u=-Z, v=+Y. -X uses u=+Z, v=+Y.
+/// +Y uses u=+X, v=-Z. -Y uses u=+X, v=+Z.
+/// +Z uses u=+X, v=+Y. -Z uses u=-X, v=+Y.
+fn box_uv_at(position: Vec3, normal: Vec3, min: Vec3, max: Vec3) -> Vec2 {
+    let x = normalized_coordinate(position.x, min.x, max.x);
+    let y = normalized_coordinate(position.y, min.y, max.y);
+    let z = normalized_coordinate(position.z, min.z, max.z);
+
+    if normal == Vec3::new(1.0, 0.0, 0.0) {
+        Vec2::new(1.0 - z, y)
+    } else if normal == Vec3::new(-1.0, 0.0, 0.0) {
+        Vec2::new(z, y)
+    } else if normal == Vec3::new(0.0, 1.0, 0.0) {
+        Vec2::new(x, 1.0 - z)
+    } else if normal == Vec3::new(0.0, -1.0, 0.0) {
+        Vec2::new(x, z)
+    } else if normal == Vec3::new(0.0, 0.0, 1.0) {
+        Vec2::new(x, y)
+    } else if normal == Vec3::new(0.0, 0.0, -1.0) {
+        Vec2::new(1.0 - x, y)
+    } else {
+        Vec2::ZERO
     }
 }
 

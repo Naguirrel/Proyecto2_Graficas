@@ -1732,6 +1732,7 @@ mod tests {
         assert_eq!(scene.object_count(), EXPECTED_CINEMA_CUBES);
         assert_eq!(scene.cube_count(), EXPECTED_CINEMA_CUBES);
         assert_eq!(scene.sphere_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
         assert_eq!(metadata.count(CinemaElement::Floor), 1);
         assert_eq!(metadata.count(CinemaElement::Screen), 1);
         assert_eq!(metadata.count(CinemaElement::LeftWall), 1);

@@ -1,6 +1,7 @@
 use crate::{
     color::Color, cube::Cube, intersection::Intersection, light::PointLight, material::Material,
-    primitive::Primitive, ray::Ray, skybox::Skybox, sphere::Sphere, texture::Texture,
+    oriented_box::OrientedBox, primitive::Primitive, ray::Ray, skybox::Skybox, sphere::Sphere,
+    texture::Texture,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +51,10 @@ impl Scene {
         self.add_primitive(sphere.into())
     }
 
+    pub fn add_oriented_box(&mut self, oriented_box: OrientedBox) -> Result<(), SceneError> {
+        self.add_primitive(oriented_box.into())
+    }
+
     pub fn add_primitive(&mut self, primitive: Primitive) -> Result<(), SceneError> {
         let material_id = primitive.material_id();
 
@@ -90,6 +95,11 @@ impl Scene {
         self.objects.iter().filter_map(Primitive::as_cube)
     }
 
+    /// Iterates over oriented-box primitives only, without allocating.
+    pub fn oriented_boxes(&self) -> impl Iterator<Item = &OrientedBox> {
+        self.objects.iter().filter_map(Primitive::as_oriented_box)
+    }
+
     pub fn object_count(&self) -> usize {
         self.objects.len()
     }
@@ -105,6 +115,13 @@ impl Scene {
         self.objects
             .iter()
             .filter(|primitive| primitive.as_sphere().is_some())
+            .count()
+    }
+
+    pub fn oriented_box_count(&self) -> usize {
+        self.objects
+            .iter()
+            .filter(|primitive| primitive.as_oriented_box().is_some())
             .count()
     }
 
@@ -160,11 +177,13 @@ impl Default for Scene {
 mod tests {
     use super::{Scene, SceneError};
     use crate::{
+        basis::Basis3,
         color::Color,
         cube::Cube,
         light::PointLight,
         material::Material,
         math::{Vec2, Vec3},
+        oriented_box::OrientedBox,
         primitive::Primitive,
         ray::Ray,
         skybox::Skybox,
@@ -194,6 +213,16 @@ mod tests {
         Sphere::new(Vec3::ZERO, 1.0, material_id).unwrap()
     }
 
+    fn unit_oriented_box(material_id: usize) -> OrientedBox {
+        OrientedBox::new(
+            Vec3::ZERO,
+            Vec3::new(1.0, 1.0, 1.0),
+            Basis3::identity(),
+            material_id,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn new_scene_starts_empty() {
         let scene = Scene::new();
@@ -202,6 +231,7 @@ mod tests {
         assert_eq!(scene.object_count(), 0);
         assert_eq!(scene.cube_count(), 0);
         assert_eq!(scene.sphere_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
         assert!(scene.materials().is_empty());
         assert!(scene.textures().is_empty());
         assert!(scene.lights().is_empty());
@@ -217,6 +247,10 @@ mod tests {
         assert_eq!(default_scene.object_count(), new_scene.object_count());
         assert_eq!(default_scene.cube_count(), new_scene.cube_count());
         assert_eq!(default_scene.sphere_count(), new_scene.sphere_count());
+        assert_eq!(
+            default_scene.oriented_box_count(),
+            new_scene.oriented_box_count()
+        );
         assert_eq!(default_scene.materials(), new_scene.materials());
         assert_eq!(default_scene.textures(), new_scene.textures());
         assert_eq!(default_scene.lights(), new_scene.lights());
@@ -354,6 +388,7 @@ mod tests {
         assert_eq!(scene.object_count(), 1);
         assert_eq!(scene.cube_count(), 1);
         assert_eq!(scene.sphere_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
         assert_eq!(scene.objects()[0].as_cube(), Some(&cube));
         assert_eq!(scene.cubes().count(), 1);
     }
@@ -367,18 +402,38 @@ mod tests {
         assert_eq!(scene.object_count(), 1);
         assert_eq!(scene.cube_count(), 0);
         assert_eq!(scene.sphere_count(), 1);
+        assert_eq!(scene.oriented_box_count(), 0);
         assert_eq!(scene.objects()[0].as_sphere(), Some(&sphere));
     }
 
     #[test]
-    fn add_primitive_accepts_cube_and_sphere() {
+    fn adding_oriented_box_with_valid_material_succeeds() {
+        let mut scene = diffuse_scene();
+        let oriented_box = unit_oriented_box(0);
+
+        assert_eq!(scene.add_oriented_box(oriented_box), Ok(()));
+        assert_eq!(scene.object_count(), 1);
+        assert_eq!(scene.cube_count(), 0);
+        assert_eq!(scene.sphere_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 1);
+        assert_eq!(scene.objects()[0].as_oriented_box(), Some(&oriented_box));
+        assert_eq!(scene.oriented_boxes().count(), 1);
+    }
+
+    #[test]
+    fn add_primitive_accepts_cube_sphere_and_oriented_box() {
         let mut scene = diffuse_scene();
 
         assert_eq!(scene.add_primitive(Primitive::from(unit_cube(0))), Ok(()));
         assert_eq!(scene.add_primitive(Primitive::from(unit_sphere(0))), Ok(()));
-        assert_eq!(scene.object_count(), 2);
+        assert_eq!(
+            scene.add_primitive(Primitive::from(unit_oriented_box(0))),
+            Ok(())
+        );
+        assert_eq!(scene.object_count(), 3);
         assert_eq!(scene.cube_count(), 1);
         assert_eq!(scene.sphere_count(), 1);
+        assert_eq!(scene.oriented_box_count(), 1);
     }
 
     #[test]
@@ -406,6 +461,18 @@ mod tests {
     }
 
     #[test]
+    fn adding_oriented_box_with_invalid_material_returns_error() {
+        let mut scene = Scene::new();
+        let oriented_box = unit_oriented_box(3);
+
+        assert_eq!(
+            scene.add_oriented_box(oriented_box),
+            Err(SceneError::MissingMaterial { material_id: 3 })
+        );
+        assert_eq!(scene.object_count(), 0);
+    }
+
+    #[test]
     fn failed_add_primitive_does_not_modify_scene() {
         let mut scene = diffuse_scene();
         scene.add_cube(unit_cube(0)).unwrap();
@@ -417,6 +484,7 @@ mod tests {
         assert_eq!(scene.object_count(), 1);
         assert_eq!(scene.cube_count(), 1);
         assert_eq!(scene.sphere_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
     }
 
     #[test]
@@ -439,6 +507,15 @@ mod tests {
     fn scene_intersection_finds_sphere() {
         let mut scene = diffuse_scene();
         scene.add_sphere(unit_sphere(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn scene_intersection_finds_oriented_box() {
+        let mut scene = diffuse_scene();
+        scene.add_oriented_box(unit_oriented_box(0)).unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
 
         assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
@@ -486,6 +563,41 @@ mod tests {
         let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
 
         assert_eq!(hit.material_id, sphere_id);
+    }
+
+    #[test]
+    fn mixed_scene_returns_oriented_box_when_oriented_box_is_closest() {
+        let mut scene = diffuse_scene();
+        let oriented_box_id = scene
+            .add_material(Material::diffuse(Color::new(1.0, 0.0, 0.0)))
+            .unwrap();
+        let orientation =
+            Basis3::from_axis_angle(Vec3::new(0.0, 1.0, 0.0), std::f32::consts::FRAC_PI_2).unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.5, -0.5, -3.0),
+                Vec3::new(0.5, 0.5, -2.0),
+                0,
+            ))
+            .unwrap();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -1.5), 0.5, 0).unwrap())
+            .unwrap();
+        scene
+            .add_oriented_box(
+                OrientedBox::new(
+                    Vec3::new(0.0, 0.0, 1.5),
+                    Vec3::new(0.5, 0.5, 0.25),
+                    orientation,
+                    oriented_box_id,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.material_id, oriented_box_id);
     }
 
     #[test]
@@ -568,6 +680,16 @@ mod tests {
     }
 
     #[test]
+    fn scene_intersection_preserves_oriented_box_uv() {
+        let mut scene = diffuse_scene();
+        scene.add_oriented_box(unit_oriented_box(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.5, 0.25, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert!(hit.uv.approx_eq(Vec2::new(0.75, 0.625)));
+    }
+
+    #[test]
     fn ray_missing_all_primitives_returns_none() {
         let mut scene = diffuse_scene();
         scene.add_cube(unit_cube(0)).unwrap();
@@ -584,10 +706,12 @@ mod tests {
         let mut scene = diffuse_scene();
         scene.add_cube(unit_cube(0)).unwrap();
         scene.add_sphere(unit_sphere(0)).unwrap();
+        scene.add_oriented_box(unit_oriented_box(0)).unwrap();
         let objects_before = scene.object_count();
 
         assert_eq!(scene.cube_count(), 1);
         assert_eq!(scene.sphere_count(), 1);
+        assert_eq!(scene.oriented_box_count(), 1);
         assert_eq!(scene.object_count(), objects_before);
     }
 }

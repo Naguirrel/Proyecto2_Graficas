@@ -1,4 +1,5 @@
 pub mod app;
+pub mod basis;
 pub mod camera;
 pub mod cinema;
 pub mod color;
@@ -8,6 +9,7 @@ pub mod intersection;
 pub mod light;
 pub mod material;
 pub mod math;
+pub mod oriented_box;
 pub mod primitive;
 pub mod ray;
 pub mod renderer;

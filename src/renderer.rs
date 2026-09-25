@@ -477,6 +477,7 @@ mod tests {
         shade_hit, shade_hit_with_albedo, trace_primary_ray, trace_ray, trace_refraction,
     };
     use crate::{
+        basis::Basis3,
         camera::{Camera, OrbitCamera},
         color::Color,
         cube::Cube,
@@ -485,6 +486,7 @@ mod tests {
         light::PointLight,
         material::Material,
         math::{Vec2, Vec3},
+        oriented_box::OrientedBox,
         ray::Ray,
         scene::Scene,
         skybox::Skybox,
@@ -665,6 +667,26 @@ mod tests {
         let material_id = scene.add_material(material).unwrap();
         scene
             .add_sphere(Sphere::new(Vec3::ZERO, 1.0, material_id).unwrap())
+            .unwrap();
+        scene
+    }
+
+    fn front_oriented_box(material_id: usize) -> OrientedBox {
+        OrientedBox::new(
+            Vec3::ZERO,
+            Vec3::new(1.0, 1.0, 0.75),
+            Basis3::from_axis_angle(Vec3::new(0.0, 1.0, 0.0), std::f32::consts::FRAC_PI_2).unwrap(),
+            material_id,
+        )
+        .unwrap()
+    }
+
+    fn front_oriented_box_scene(material: Material) -> Scene {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let material_id = scene.add_material(material).unwrap();
+        scene
+            .add_oriented_box(front_oriented_box(material_id))
             .unwrap();
         scene
     }
@@ -1550,6 +1572,88 @@ mod tests {
         let ray = Ray::new(Vec3::new(0.0, 3.0, 0.0), Vec3::new(0.0, -1.0, 0.0));
 
         assert_color_near(trace_ray(&scene, &ray, 0), Color::new(0.0, 1.0, 0.0));
+    }
+
+    #[test]
+    fn opaque_oriented_box_receives_local_shading() {
+        let scene = front_oriented_box_scene(Material::diffuse(Color::new(0.2, 0.4, 0.6)));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.2, 0.4, 0.6),
+        );
+    }
+
+    #[test]
+    fn oriented_box_can_cast_shadow() {
+        let material = Material::new(Color::WHITE, 0.0, 1.0, 0.0, 0.0, 1.0, Color::BLACK);
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene
+            .add_oriented_box(
+                OrientedBox::new(
+                    Vec3::new(0.0, 0.0, 1.8),
+                    Vec3::new(0.25, 0.25, 0.25),
+                    Basis3::from_axis_angle(Vec3::new(0.0, 1.0, 0.0), 0.6).unwrap(),
+                    0,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_eq!(
+            shade_hit(&view_ray(), flat_hit(), material, &scene),
+            Color::BLACK
+        );
+    }
+
+    #[test]
+    fn reflective_oriented_box_uses_secondary_color() {
+        let mut scene = front_oriented_box_scene(reflective_material(1.0));
+        scene.set_skybox(solid_skybox(Color::new(0.3, 0.6, 0.9)));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.3, 0.6, 0.9),
+        );
+    }
+
+    #[test]
+    fn transparent_oriented_box_refracts_to_background() {
+        let scene = front_oriented_box_scene(transparent_material(1.0, 0.0));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            background_color(front_ray().direction),
+        );
+    }
+
+    #[test]
+    fn textured_oriented_box_uses_box_uvs() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let texture_id =
+            scene.add_texture(Texture::new(1, 1, vec![Color::new(0.9, 0.1, 0.2)]).unwrap());
+        let material_id = scene
+            .add_material(Material::diffuse(Color::WHITE).with_texture(
+                texture_id,
+                Vec2::new(1.0, 1.0),
+                WrapMode::Clamp,
+            ))
+            .unwrap();
+        scene
+            .add_oriented_box(front_oriented_box(material_id))
+            .unwrap();
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.9, 0.1, 0.2),
+        );
     }
 
     #[test]
@@ -2594,6 +2698,14 @@ mod tests {
     #[test]
     fn parallel_render_matches_sequential_with_mixed_geometry() {
         let scene = mixed_cube_sphere_scene();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 19, 13);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_oriented_box() {
+        let scene = front_oriented_box_scene(Material::diffuse(Color::new(0.2, 0.4, 0.6)));
         let camera = front_camera(1.0);
 
         assert_parallel_matches_sequential(&scene, &camera, 19, 13);
