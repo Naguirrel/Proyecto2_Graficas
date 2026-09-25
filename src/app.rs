@@ -1,21 +1,10 @@
 use minifb::{Key, KeyRepeat, Window, WindowOptions};
 use std::time::{Duration, Instant};
 
-use crate::{
-    camera::{CameraInput, OrbitCamera},
-    cinema,
-    framebuffer::Framebuffer,
-    math::Vec3,
-    renderer,
-};
+use crate::{camera::CameraInput, framebuffer::Framebuffer, renderer, space};
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
-const INITIAL_CAMERA_TARGET: Vec3 = Vec3::new(0.0, 0.70, -3.40);
-const INITIAL_CAMERA_YAW: f32 = 0.0;
-const INITIAL_CAMERA_PITCH: f32 = 0.25;
-const INITIAL_CAMERA_DISTANCE: f32 = 10.50;
-const INITIAL_CAMERA_FOV_DEGREES: f32 = 55.0;
 const INTERACTIVE_SCALE: f32 = 0.5;
 const FULL_QUALITY_DELAY: Duration = Duration::from_millis(180);
 const PRINT_RENDER_TIMES: bool = true;
@@ -26,18 +15,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         interactive_dimensions(WIDTH, HEIGHT, INTERACTIVE_SCALE);
     let mut interactive_framebuffer = Framebuffer::new(interactive_width, interactive_height);
     let aspect_ratio = WIDTH as f32 / HEIGHT as f32;
-    let mut orbit_camera = OrbitCamera::new(
-        INITIAL_CAMERA_TARGET,
-        INITIAL_CAMERA_YAW,
-        INITIAL_CAMERA_PITCH,
-        INITIAL_CAMERA_DISTANCE,
-        INITIAL_CAMERA_FOV_DEGREES,
-        aspect_ratio,
-        Vec3::new(0.0, 1.0, 0.0),
-    );
-    let scene = cinema::build_cinema_scene()?;
+    let mut orbit_camera = space::blue_moon_orbit_camera(aspect_ratio);
+    let scene = space::build_blue_moon_scene()?;
     let mut window = Window::new(
-        "Diorama Raytracing - Sala de cine",
+        space::BLUE_MOON_WINDOW_TITLE,
         WIDTH,
         HEIGHT,
         WindowOptions {
