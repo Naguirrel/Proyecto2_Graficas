@@ -15,10 +15,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         interactive_dimensions(WIDTH, HEIGHT, INTERACTIVE_SCALE);
     let mut interactive_framebuffer = Framebuffer::new(interactive_width, interactive_height);
     let aspect_ratio = WIDTH as f32 / HEIGHT as f32;
-    let mut orbit_camera = space::blue_moon_orbit_camera(aspect_ratio);
-    let scene = space::build_blue_moon_scene()?;
+    let mut orbit_camera = space::space_levels_orbit_camera(aspect_ratio);
+    let scene = space::build_space_levels_scene()?;
     let mut window = Window::new(
-        space::BLUE_MOON_WINDOW_TITLE,
+        space::SPACE_WORLDS_WINDOW_TITLE,
         WIDTH,
         HEIGHT,
         WindowOptions {
