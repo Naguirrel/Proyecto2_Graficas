@@ -4,6 +4,7 @@ pub mod camera;
 pub mod cinema;
 pub mod color;
 pub mod cube;
+pub mod cylinder;
 pub mod framebuffer;
 pub mod intersection;
 pub mod light;

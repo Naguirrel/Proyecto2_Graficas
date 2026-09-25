@@ -1,5 +1,6 @@
 use crate::{
-    cube::Cube, intersection::Intersection, oriented_box::OrientedBox, ray::Ray, sphere::Sphere,
+    cube::Cube, cylinder::Cylinder, intersection::Intersection, oriented_box::OrientedBox,
+    ray::Ray, sphere::Sphere,
 };
 
 #[derive(Debug, PartialEq)]
@@ -7,6 +8,7 @@ pub enum Primitive {
     Cube(Cube),
     Sphere(Sphere),
     OrientedBox(OrientedBox),
+    Cylinder(Cylinder),
 }
 
 impl Primitive {
@@ -15,6 +17,7 @@ impl Primitive {
             Self::Cube(cube) => cube.intersect(ray, t_min, t_max),
             Self::Sphere(sphere) => sphere.intersect(ray, t_min, t_max),
             Self::OrientedBox(oriented_box) => oriented_box.intersect(ray, t_min, t_max),
+            Self::Cylinder(cylinder) => cylinder.intersect(ray, t_min, t_max),
         }
     }
 
@@ -23,27 +26,35 @@ impl Primitive {
             Self::Cube(cube) => cube.material_id,
             Self::Sphere(sphere) => sphere.material_id(),
             Self::OrientedBox(oriented_box) => oriented_box.material_id(),
+            Self::Cylinder(cylinder) => cylinder.material_id(),
         }
     }
 
     pub fn as_cube(&self) -> Option<&Cube> {
         match self {
             Self::Cube(cube) => Some(cube),
-            Self::Sphere(_) | Self::OrientedBox(_) => None,
+            Self::Sphere(_) | Self::OrientedBox(_) | Self::Cylinder(_) => None,
         }
     }
 
     pub fn as_sphere(&self) -> Option<&Sphere> {
         match self {
-            Self::Cube(_) | Self::OrientedBox(_) => None,
+            Self::Cube(_) | Self::OrientedBox(_) | Self::Cylinder(_) => None,
             Self::Sphere(sphere) => Some(sphere),
         }
     }
 
     pub fn as_oriented_box(&self) -> Option<&OrientedBox> {
         match self {
-            Self::Cube(_) | Self::Sphere(_) => None,
+            Self::Cube(_) | Self::Sphere(_) | Self::Cylinder(_) => None,
             Self::OrientedBox(oriented_box) => Some(oriented_box),
+        }
+    }
+
+    pub fn as_cylinder(&self) -> Option<&Cylinder> {
+        match self {
+            Self::Cube(_) | Self::Sphere(_) | Self::OrientedBox(_) => None,
+            Self::Cylinder(cylinder) => Some(cylinder),
         }
     }
 }
@@ -66,11 +77,18 @@ impl From<OrientedBox> for Primitive {
     }
 }
 
+impl From<Cylinder> for Primitive {
+    fn from(cylinder: Cylinder) -> Self {
+        Self::Cylinder(cylinder)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Primitive;
     use crate::{
-        basis::Basis3, cube::Cube, math::Vec3, oriented_box::OrientedBox, ray::Ray, sphere::Sphere,
+        basis::Basis3, cube::Cube, cylinder::Cylinder, math::Vec3, oriented_box::OrientedBox,
+        ray::Ray, sphere::Sphere,
     };
 
     fn unit_cube() -> Cube {
@@ -83,6 +101,10 @@ mod tests {
 
     fn unit_oriented_box() -> OrientedBox {
         OrientedBox::new(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0), Basis3::identity(), 4).unwrap()
+    }
+
+    fn unit_cylinder() -> Cylinder {
+        Cylinder::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), 5).unwrap()
     }
 
     #[test]
@@ -110,15 +132,25 @@ mod tests {
     }
 
     #[test]
+    fn from_cylinder_creates_cylinder_variant() {
+        let cylinder = unit_cylinder();
+        let primitive = Primitive::from(cylinder);
+
+        assert_eq!(primitive, Primitive::Cylinder(cylinder));
+    }
+
+    #[test]
     fn as_cube_only_returns_cube() {
         let cube = unit_cube();
         let cube_primitive = Primitive::from(cube);
         let sphere_primitive = Primitive::from(unit_sphere());
         let oriented_box_primitive = Primitive::from(unit_oriented_box());
+        let cylinder_primitive = Primitive::from(unit_cylinder());
 
         assert_eq!(cube_primitive.as_cube(), Some(&cube));
         assert!(sphere_primitive.as_cube().is_none());
         assert!(oriented_box_primitive.as_cube().is_none());
+        assert!(cylinder_primitive.as_cube().is_none());
     }
 
     #[test]
@@ -127,10 +159,12 @@ mod tests {
         let cube_primitive = Primitive::from(unit_cube());
         let sphere_primitive = Primitive::from(sphere);
         let oriented_box_primitive = Primitive::from(unit_oriented_box());
+        let cylinder_primitive = Primitive::from(unit_cylinder());
 
         assert!(cube_primitive.as_sphere().is_none());
         assert_eq!(sphere_primitive.as_sphere(), Some(&sphere));
         assert!(oriented_box_primitive.as_sphere().is_none());
+        assert!(cylinder_primitive.as_sphere().is_none());
     }
 
     #[test]
@@ -139,9 +173,11 @@ mod tests {
         let cube_primitive = Primitive::from(unit_cube());
         let sphere_primitive = Primitive::from(unit_sphere());
         let oriented_box_primitive = Primitive::from(oriented_box);
+        let cylinder_primitive = Primitive::from(unit_cylinder());
 
         assert!(cube_primitive.as_oriented_box().is_none());
         assert!(sphere_primitive.as_oriented_box().is_none());
+        assert!(cylinder_primitive.as_oriented_box().is_none());
         assert_eq!(
             oriented_box_primitive.as_oriented_box(),
             Some(&oriented_box)
@@ -149,10 +185,25 @@ mod tests {
     }
 
     #[test]
+    fn as_cylinder_only_returns_cylinder() {
+        let cylinder = unit_cylinder();
+        let cube_primitive = Primitive::from(unit_cube());
+        let sphere_primitive = Primitive::from(unit_sphere());
+        let oriented_box_primitive = Primitive::from(unit_oriented_box());
+        let cylinder_primitive = Primitive::from(cylinder);
+
+        assert!(cube_primitive.as_cylinder().is_none());
+        assert!(sphere_primitive.as_cylinder().is_none());
+        assert!(oriented_box_primitive.as_cylinder().is_none());
+        assert_eq!(cylinder_primitive.as_cylinder(), Some(&cylinder));
+    }
+
+    #[test]
     fn material_id_delegates_to_variant() {
         assert_eq!(Primitive::from(unit_cube()).material_id(), 2);
         assert_eq!(Primitive::from(unit_sphere()).material_id(), 3);
         assert_eq!(Primitive::from(unit_oriented_box()).material_id(), 4);
+        assert_eq!(Primitive::from(unit_cylinder()).material_id(), 5);
     }
 
     #[test]
@@ -188,6 +239,18 @@ mod tests {
         assert_eq!(
             primitive.intersect(&ray, 0.001, 100.0),
             oriented_box.intersect(&ray, 0.001, 100.0)
+        );
+    }
+
+    #[test]
+    fn cylinder_intersection_is_delegated() {
+        let cylinder = unit_cylinder();
+        let primitive = Primitive::from(cylinder);
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert_eq!(
+            primitive.intersect(&ray, 0.001, 100.0),
+            cylinder.intersect(&ray, 0.001, 100.0)
         );
     }
 }
