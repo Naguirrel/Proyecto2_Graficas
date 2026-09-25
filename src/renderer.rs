@@ -480,6 +480,7 @@ mod tests {
         basis::Basis3,
         camera::{Camera, OrbitCamera},
         color::Color,
+        cone::Cone,
         cube::Cube,
         cylinder::Cylinder,
         framebuffer::Framebuffer,
@@ -701,6 +702,18 @@ mod tests {
         scene.set_ambient_light(Color::WHITE);
         let material_id = scene.add_material(material).unwrap();
         scene.add_cylinder(front_cylinder(material_id)).unwrap();
+        scene
+    }
+
+    fn front_cone(material_id: usize) -> Cone {
+        Cone::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), material_id).unwrap()
+    }
+
+    fn front_cone_scene(material: Material) -> Scene {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let material_id = scene.add_material(material).unwrap();
+        scene.add_cone(front_cone(material_id)).unwrap();
         scene
     }
 
@@ -1744,6 +1757,79 @@ mod tests {
     }
 
     #[test]
+    fn opaque_cone_receives_local_shading() {
+        let scene = front_cone_scene(Material::diffuse(Color::new(0.2, 0.4, 0.6)));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.2, 0.4, 0.6),
+        );
+    }
+
+    #[test]
+    fn cone_can_cast_shadow() {
+        let material = Material::new(Color::WHITE, 0.0, 1.0, 0.0, 0.0, 1.0, Color::BLACK);
+        let mut scene = scene_with_material(Material::diffuse(Color::WHITE));
+        scene.set_ambient_light(Color::BLACK);
+        scene
+            .add_cone(Cone::new(Vec3::new(0.0, 0.0, 1.8), 0.3, 0.3, Basis3::identity(), 0).unwrap())
+            .unwrap();
+        scene.add_light(PointLight::new(
+            Vec3::new(0.0, 0.0, 3.0),
+            Color::WHITE,
+            10.0,
+        ));
+
+        assert_eq!(
+            shade_hit(&view_ray(), flat_hit(), material, &scene),
+            Color::BLACK
+        );
+    }
+
+    #[test]
+    fn reflective_cone_uses_secondary_color() {
+        let mut scene = front_cone_scene(reflective_material(1.0));
+        scene.set_skybox(solid_skybox(Color::new(0.3, 0.6, 0.9)));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.3, 0.6, 0.9),
+        );
+    }
+
+    #[test]
+    fn transparent_cone_refracts_to_skybox() {
+        let mut scene = front_cone_scene(transparent_material(1.0, 0.0));
+        scene.set_skybox(solid_skybox(Color::new(0.2, 0.3, 0.8)));
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.2, 0.3, 0.8),
+        );
+    }
+
+    #[test]
+    fn textured_cone_uses_conical_uvs() {
+        let mut scene = Scene::new();
+        scene.set_ambient_light(Color::WHITE);
+        let texture_id =
+            scene.add_texture(Texture::new(1, 1, vec![Color::new(0.9, 0.1, 0.2)]).unwrap());
+        let material_id = scene
+            .add_material(Material::diffuse(Color::WHITE).with_texture(
+                texture_id,
+                Vec2::new(1.0, 1.0),
+                WrapMode::Clamp,
+            ))
+            .unwrap();
+        scene.add_cone(front_cone(material_id)).unwrap();
+
+        assert_color_near(
+            trace_ray(&scene, &front_ray(), 0),
+            Color::new(0.9, 0.1, 0.2),
+        );
+    }
+
+    #[test]
     fn reflected_ray_can_hit_sphere() {
         let mut scene = Scene::new();
         scene.set_ambient_light(Color::WHITE);
@@ -2521,6 +2607,25 @@ mod tests {
     }
 
     #[test]
+    fn small_framebuffer_with_cone_keeps_dimensions_and_valid_pixels() {
+        let scene = front_cone_scene(Material::diffuse(Color::new(0.2, 0.4, 0.6)));
+        let camera = front_camera(1.0);
+        let mut framebuffer = Framebuffer::new(9, 7);
+
+        render_scene(&mut framebuffer, &camera, &scene);
+
+        assert_eq!(framebuffer.width(), 9);
+        assert_eq!(framebuffer.height(), 7);
+        assert_eq!(framebuffer.pixels().len(), 63);
+        assert!(
+            framebuffer
+                .pixels()
+                .iter()
+                .all(|&pixel| pixel <= 0x00ff_ffff)
+        );
+    }
+
+    #[test]
     fn mixed_scene_render_contains_only_finite_colors() {
         let scene = mixed_cube_sphere_scene();
         let camera = front_camera(1.0);
@@ -2820,6 +2925,14 @@ mod tests {
     #[test]
     fn parallel_render_matches_sequential_with_cylinder() {
         let scene = front_cylinder_scene(Material::diffuse(Color::new(0.2, 0.4, 0.6)));
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 19, 13);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_cone() {
+        let scene = front_cone_scene(Material::diffuse(Color::new(0.2, 0.4, 0.6)));
         let camera = front_camera(1.0);
 
         assert_parallel_matches_sequential(&scene, &camera, 19, 13);

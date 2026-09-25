@@ -1,7 +1,7 @@
 use crate::{
-    color::Color, cube::Cube, cylinder::Cylinder, intersection::Intersection, light::PointLight,
-    material::Material, oriented_box::OrientedBox, primitive::Primitive, ray::Ray, skybox::Skybox,
-    sphere::Sphere, texture::Texture,
+    color::Color, cone::Cone, cube::Cube, cylinder::Cylinder, intersection::Intersection,
+    light::PointLight, material::Material, oriented_box::OrientedBox, primitive::Primitive,
+    ray::Ray, skybox::Skybox, sphere::Sphere, texture::Texture,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -59,6 +59,10 @@ impl Scene {
         self.add_primitive(cylinder.into())
     }
 
+    pub fn add_cone(&mut self, cone: Cone) -> Result<(), SceneError> {
+        self.add_primitive(cone.into())
+    }
+
     pub fn add_primitive(&mut self, primitive: Primitive) -> Result<(), SceneError> {
         let material_id = primitive.material_id();
 
@@ -109,6 +113,11 @@ impl Scene {
         self.objects.iter().filter_map(Primitive::as_cylinder)
     }
 
+    /// Iterates over cone primitives only, without allocating.
+    pub fn cones(&self) -> impl Iterator<Item = &Cone> {
+        self.objects.iter().filter_map(Primitive::as_cone)
+    }
+
     pub fn object_count(&self) -> usize {
         self.objects.len()
     }
@@ -138,6 +147,13 @@ impl Scene {
         self.objects
             .iter()
             .filter(|primitive| primitive.as_cylinder().is_some())
+            .count()
+    }
+
+    pub fn cone_count(&self) -> usize {
+        self.objects
+            .iter()
+            .filter(|primitive| primitive.as_cone().is_some())
             .count()
     }
 
@@ -195,6 +211,7 @@ mod tests {
     use crate::{
         basis::Basis3,
         color::Color,
+        cone::Cone,
         cube::Cube,
         cylinder::Cylinder,
         light::PointLight,
@@ -244,6 +261,10 @@ mod tests {
         Cylinder::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), material_id).unwrap()
     }
 
+    fn unit_cone(material_id: usize) -> Cone {
+        Cone::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), material_id).unwrap()
+    }
+
     #[test]
     fn new_scene_starts_empty() {
         let scene = Scene::new();
@@ -254,6 +275,7 @@ mod tests {
         assert_eq!(scene.sphere_count(), 0);
         assert_eq!(scene.oriented_box_count(), 0);
         assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 0);
         assert!(scene.materials().is_empty());
         assert!(scene.textures().is_empty());
         assert!(scene.lights().is_empty());
@@ -274,6 +296,7 @@ mod tests {
             new_scene.oriented_box_count()
         );
         assert_eq!(default_scene.cylinder_count(), new_scene.cylinder_count());
+        assert_eq!(default_scene.cone_count(), new_scene.cone_count());
         assert_eq!(default_scene.materials(), new_scene.materials());
         assert_eq!(default_scene.textures(), new_scene.textures());
         assert_eq!(default_scene.lights(), new_scene.lights());
@@ -413,6 +436,7 @@ mod tests {
         assert_eq!(scene.sphere_count(), 0);
         assert_eq!(scene.oriented_box_count(), 0);
         assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 0);
         assert_eq!(scene.objects()[0].as_cube(), Some(&cube));
         assert_eq!(scene.cubes().count(), 1);
     }
@@ -428,6 +452,7 @@ mod tests {
         assert_eq!(scene.sphere_count(), 1);
         assert_eq!(scene.oriented_box_count(), 0);
         assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 0);
         assert_eq!(scene.objects()[0].as_sphere(), Some(&sphere));
     }
 
@@ -442,6 +467,7 @@ mod tests {
         assert_eq!(scene.sphere_count(), 0);
         assert_eq!(scene.oriented_box_count(), 1);
         assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 0);
         assert_eq!(scene.objects()[0].as_oriented_box(), Some(&oriented_box));
         assert_eq!(scene.oriented_boxes().count(), 1);
     }
@@ -457,12 +483,29 @@ mod tests {
         assert_eq!(scene.sphere_count(), 0);
         assert_eq!(scene.oriented_box_count(), 0);
         assert_eq!(scene.cylinder_count(), 1);
+        assert_eq!(scene.cone_count(), 0);
         assert_eq!(scene.objects()[0].as_cylinder(), Some(&cylinder));
         assert_eq!(scene.cylinders().count(), 1);
     }
 
     #[test]
-    fn add_primitive_accepts_cube_sphere_oriented_box_and_cylinder() {
+    fn adding_cone_with_valid_material_succeeds() {
+        let mut scene = diffuse_scene();
+        let cone = unit_cone(0);
+
+        assert_eq!(scene.add_cone(cone), Ok(()));
+        assert_eq!(scene.object_count(), 1);
+        assert_eq!(scene.cube_count(), 0);
+        assert_eq!(scene.sphere_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
+        assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 1);
+        assert_eq!(scene.objects()[0].as_cone(), Some(&cone));
+        assert_eq!(scene.cones().count(), 1);
+    }
+
+    #[test]
+    fn add_primitive_accepts_cube_sphere_oriented_box_cylinder_and_cone() {
         let mut scene = diffuse_scene();
 
         assert_eq!(scene.add_primitive(Primitive::from(unit_cube(0))), Ok(()));
@@ -475,11 +518,13 @@ mod tests {
             scene.add_primitive(Primitive::from(unit_cylinder(0))),
             Ok(())
         );
-        assert_eq!(scene.object_count(), 4);
+        assert_eq!(scene.add_primitive(Primitive::from(unit_cone(0))), Ok(()));
+        assert_eq!(scene.object_count(), 5);
         assert_eq!(scene.cube_count(), 1);
         assert_eq!(scene.sphere_count(), 1);
         assert_eq!(scene.oriented_box_count(), 1);
         assert_eq!(scene.cylinder_count(), 1);
+        assert_eq!(scene.cone_count(), 1);
     }
 
     #[test]
@@ -531,6 +576,18 @@ mod tests {
     }
 
     #[test]
+    fn adding_cone_with_invalid_material_returns_error() {
+        let mut scene = Scene::new();
+        let cone = unit_cone(3);
+
+        assert_eq!(
+            scene.add_cone(cone),
+            Err(SceneError::MissingMaterial { material_id: 3 })
+        );
+        assert_eq!(scene.object_count(), 0);
+    }
+
+    #[test]
     fn failed_add_primitive_does_not_modify_scene() {
         let mut scene = diffuse_scene();
         scene.add_cube(unit_cube(0)).unwrap();
@@ -544,6 +601,7 @@ mod tests {
         assert_eq!(scene.sphere_count(), 0);
         assert_eq!(scene.oriented_box_count(), 0);
         assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 0);
     }
 
     #[test]
@@ -584,6 +642,15 @@ mod tests {
     fn scene_intersection_finds_cylinder() {
         let mut scene = diffuse_scene();
         scene.add_cylinder(unit_cylinder(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn scene_intersection_finds_cone() {
+        let mut scene = diffuse_scene();
+        scene.add_cone(unit_cone(0)).unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
 
         assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
@@ -703,14 +770,54 @@ mod tests {
     }
 
     #[test]
+    fn mixed_scene_returns_cone_when_cone_is_closest() {
+        let mut scene = diffuse_scene();
+        let cone_id = scene
+            .add_material(Material::diffuse(Color::new(1.0, 0.0, 0.0)))
+            .unwrap();
+        scene
+            .add_cube(Cube::new(
+                Vec3::new(-0.5, -0.5, -3.0),
+                Vec3::new(0.5, 0.5, -2.0),
+                0,
+            ))
+            .unwrap();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -1.5), 0.5, 0).unwrap())
+            .unwrap();
+        scene.add_oriented_box(unit_oriented_box(0)).unwrap();
+        scene
+            .add_cylinder(
+                Cylinder::new(Vec3::new(0.0, 0.0, -0.5), 0.5, 0.5, Basis3::identity(), 0).unwrap(),
+            )
+            .unwrap();
+        scene
+            .add_cone(
+                Cone::new(
+                    Vec3::new(0.0, 0.0, 1.5),
+                    0.5,
+                    0.5,
+                    Basis3::identity(),
+                    cone_id,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(hit.material_id, cone_id);
+    }
+
+    #[test]
     fn insertion_order_does_not_change_closest_hit() {
         let mut first = diffuse_scene();
         let mut second = diffuse_scene();
-        let near = Sphere::new(Vec3::new(0.0, 0.0, 1.5), 0.5, 0).unwrap();
+        let near = Cone::new(Vec3::new(0.0, 0.0, 1.5), 0.5, 0.5, Basis3::identity(), 0).unwrap();
         let far = Cube::new(Vec3::new(-0.5, -0.5, -3.0), Vec3::new(0.5, 0.5, -2.0), 0);
         first.add_cube(far).unwrap();
-        first.add_sphere(near).unwrap();
-        second.add_sphere(near).unwrap();
+        first.add_cone(near).unwrap();
+        second.add_cone(near).unwrap();
         second.add_cube(far).unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 4.0), Vec3::new(0.0, 0.0, -1.0));
 
@@ -802,6 +909,16 @@ mod tests {
     }
 
     #[test]
+    fn scene_intersection_preserves_cone_uv() {
+        let mut scene = diffuse_scene();
+        scene.add_cone(unit_cone(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.25, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert!(hit.uv.approx_eq(Vec2::new(0.75, 0.625)));
+    }
+
+    #[test]
     fn ray_missing_all_primitives_returns_none() {
         let mut scene = diffuse_scene();
         scene.add_cube(unit_cube(0)).unwrap();
@@ -820,12 +937,14 @@ mod tests {
         scene.add_sphere(unit_sphere(0)).unwrap();
         scene.add_oriented_box(unit_oriented_box(0)).unwrap();
         scene.add_cylinder(unit_cylinder(0)).unwrap();
+        scene.add_cone(unit_cone(0)).unwrap();
         let objects_before = scene.object_count();
 
         assert_eq!(scene.cube_count(), 1);
         assert_eq!(scene.sphere_count(), 1);
         assert_eq!(scene.oriented_box_count(), 1);
         assert_eq!(scene.cylinder_count(), 1);
+        assert_eq!(scene.cone_count(), 1);
         assert_eq!(scene.object_count(), objects_before);
     }
 }
