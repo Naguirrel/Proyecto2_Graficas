@@ -1,21 +1,18 @@
-use minifb::{Key, KeyRepeat, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
 use std::time::{Duration, Instant};
 
 use crate::{
     camera::{CameraInput, OrbitCamera},
-    cinema,
     framebuffer::Framebuffer,
     math::Vec3,
+    ray::Ray,
     renderer,
+    scene::Scene,
+    space::{self, PlanetType, SceneState, SelectorWorld},
 };
 
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
-const INITIAL_CAMERA_TARGET: Vec3 = Vec3::new(0.0, 0.70, -3.40);
-const INITIAL_CAMERA_YAW: f32 = 0.0;
-const INITIAL_CAMERA_PITCH: f32 = 0.25;
-const INITIAL_CAMERA_DISTANCE: f32 = 10.50;
-const INITIAL_CAMERA_FOV_DEGREES: f32 = 55.0;
 const INTERACTIVE_SCALE: f32 = 0.5;
 const FULL_QUALITY_DELAY: Duration = Duration::from_millis(180);
 const PRINT_RENDER_TIMES: bool = true;
@@ -26,18 +23,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         interactive_dimensions(WIDTH, HEIGHT, INTERACTIVE_SCALE);
     let mut interactive_framebuffer = Framebuffer::new(interactive_width, interactive_height);
     let aspect_ratio = WIDTH as f32 / HEIGHT as f32;
-    let mut orbit_camera = OrbitCamera::new(
-        INITIAL_CAMERA_TARGET,
-        INITIAL_CAMERA_YAW,
-        INITIAL_CAMERA_PITCH,
-        INITIAL_CAMERA_DISTANCE,
-        INITIAL_CAMERA_FOV_DEGREES,
-        aspect_ratio,
-        Vec3::new(0.0, 1.0, 0.0),
-    );
-    let scene = cinema::build_cinema_scene()?;
+    let mut scene_state = SceneState::Galaxy;
+    let mut orbit_camera = space::galaxy_selector_orbit_camera(aspect_ratio);
+    let mut scene = space::build_galaxy_selector_scene()?;
     let mut window = Window::new(
-        "Diorama Raytracing - Sala de cine",
+        space::SPACE_WORLDS_WINDOW_TITLE,
         WIDTH,
         HEIGHT,
         WindowOptions {
@@ -52,16 +42,48 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut camera = orbit_camera.to_camera();
     let mut render_state = InteractiveRenderState::new();
     let mut last_frame = Instant::now();
+    let mut left_mouse_was_down = false;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let now = Instant::now();
         let delta_seconds = now.duration_since(last_frame).as_secs_f32();
         last_frame = now;
 
+        if scene_state != SceneState::Galaxy && window.is_key_pressed(Key::Backspace, KeyRepeat::No)
+        {
+            scene_state = SceneState::Galaxy;
+            scene = space::build_galaxy_selector_scene()?;
+            orbit_camera = space::galaxy_selector_orbit_camera(aspect_ratio);
+            camera = orbit_camera.to_camera();
+            render_state.mark_scene_changed();
+            println!("Regresando al selector de mundos");
+        }
+
         if orbit_camera.update(read_camera_input(&window), delta_seconds) {
             camera = orbit_camera.to_camera();
             render_state.mark_camera_changed(now);
         }
+
+        let left_mouse_down = window.get_mouse_down(MouseButton::Left);
+        if scene_state == SceneState::Galaxy
+            && left_mouse_down
+            && !left_mouse_was_down
+            && let Some((mouse_x, mouse_y)) = window.get_mouse_pos(MouseMode::Discard)
+            && let Some((pixel_x, pixel_y)) =
+                mouse_to_framebuffer_pixel(mouse_x, mouse_y, WIDTH, HEIGHT, WIDTH, HEIGHT)
+        {
+            let ray = camera.ray_for_pixel(pixel_x, pixel_y, WIDTH, HEIGHT);
+
+            if let Some(planet) = pick_selector_world(&ray, &space::galaxy_selector_worlds()) {
+                scene_state = SceneState::Planet(planet);
+                scene = build_planet_scene(planet)?;
+                orbit_camera = planet_orbit_camera(planet, aspect_ratio);
+                camera = orbit_camera.to_camera();
+                render_state.mark_scene_changed();
+                println!("Mundo seleccionado: {}", planet_label(planet));
+            }
+        }
+        left_mouse_was_down = left_mouse_down;
 
         if let Some(quality) = render_state.next_render(now, FULL_QUALITY_DELAY) {
             let started = Instant::now();
@@ -112,10 +134,12 @@ fn read_camera_input(window: &Window) -> CameraInput {
 
 fn print_controls() {
     println!("Controles:");
+    println!("  Click izquierdo: seleccionar mundo en el selector");
     println!("  W/S: inclinación");
     println!("  A/D: rotación");
     println!("  Q/E: zoom");
     println!("  R: reiniciar");
+    println!("  Backspace: volver al selector");
     println!("  Escape: salir");
 }
 
@@ -160,6 +184,13 @@ impl InteractiveRenderState {
         self.scene_dirty = true;
         self.last_interaction = Some(now);
         self.interactive_mode = true;
+        self.full_quality_pending = true;
+    }
+
+    fn mark_scene_changed(&mut self) {
+        self.scene_dirty = true;
+        self.last_interaction = None;
+        self.interactive_mode = false;
         self.full_quality_pending = true;
     }
 
@@ -224,15 +255,126 @@ fn print_render_timing(quality: RenderQuality, width: usize, height: usize, dura
     }
 }
 
+fn build_planet_scene(planet: PlanetType) -> Result<Scene, space::SpaceBuildError> {
+    match planet {
+        PlanetType::BlueMoon => space::build_blue_moon_scene(),
+        PlanetType::CookieWorld => space::build_cookie_world_scene(),
+    }
+}
+
+fn planet_orbit_camera(planet: PlanetType, aspect_ratio: f32) -> OrbitCamera {
+    match planet {
+        PlanetType::BlueMoon => space::blue_moon_orbit_camera(aspect_ratio),
+        PlanetType::CookieWorld => space::cookie_world_orbit_camera(aspect_ratio),
+    }
+}
+
+fn planet_label(planet: PlanetType) -> &'static str {
+    match planet {
+        PlanetType::BlueMoon => "Luna Azul",
+        PlanetType::CookieWorld => "Planeta galleta",
+    }
+}
+
+fn mouse_to_framebuffer_pixel(
+    mouse_x: f32,
+    mouse_y: f32,
+    window_width: usize,
+    window_height: usize,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
+) -> Option<(usize, usize)> {
+    if !mouse_x.is_finite()
+        || !mouse_y.is_finite()
+        || window_width == 0
+        || window_height == 0
+        || framebuffer_width == 0
+        || framebuffer_height == 0
+        || mouse_x < 0.0
+        || mouse_y < 0.0
+        || mouse_x >= window_width as f32
+        || mouse_y >= window_height as f32
+    {
+        return None;
+    }
+
+    let pixel_x = ((mouse_x / window_width as f32) * framebuffer_width as f32).floor() as usize;
+    let pixel_y = ((mouse_y / window_height as f32) * framebuffer_height as f32).floor() as usize;
+
+    Some((
+        pixel_x.min(framebuffer_width - 1),
+        pixel_y.min(framebuffer_height - 1),
+    ))
+}
+
+fn pick_selector_world(ray: &Ray, worlds: &[SelectorWorld]) -> Option<PlanetType> {
+    worlds
+        .iter()
+        .filter_map(|world| {
+            ray_sphere_distance(ray, world.center, world.radius)
+                .map(|distance| (world.planet, distance))
+        })
+        .min_by(|(_, left), (_, right)| {
+            left.partial_cmp(right).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(planet, _)| planet)
+}
+
+fn ray_sphere_distance(ray: &Ray, center: Vec3, radius: f32) -> Option<f32> {
+    if !radius.is_finite()
+        || radius <= 0.0
+        || !is_finite_vec3(center)
+        || !is_finite_vec3(ray.origin)
+        || !is_finite_vec3(ray.direction)
+        || ray.direction == Vec3::ZERO
+    {
+        return None;
+    }
+
+    let oc = ray.origin - center;
+    let a = ray.direction.dot(ray.direction);
+    let half_b = oc.dot(ray.direction);
+    let c = oc.dot(oc) - radius * radius;
+    let discriminant = half_b * half_b - a * c;
+
+    if !a.is_finite()
+        || a <= 0.0001
+        || !half_b.is_finite()
+        || !c.is_finite()
+        || !discriminant.is_finite()
+        || discriminant < 0.0
+    {
+        return None;
+    }
+
+    let sqrt_discriminant = discriminant.sqrt();
+    let near = (-half_b - sqrt_discriminant) / a;
+    let far = (-half_b + sqrt_discriminant) / a;
+
+    if near.is_finite() && near >= 0.001 {
+        Some(near)
+    } else if far.is_finite() && far >= 0.001 {
+        Some(far)
+    } else {
+        None
+    }
+}
+
+fn is_finite_vec3(vector: Vec3) -> bool {
+    vector.x.is_finite() && vector.y.is_finite() && vector.z.is_finite()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, RenderQuality,
-        interactive_dimensions,
+        interactive_dimensions, mouse_to_framebuffer_pixel, pick_selector_world,
     };
     use crate::{
         camera::{Camera, CameraInput, OrbitCamera},
         math::Vec3,
+        ray::Ray,
+        space::{PlanetType, SelectorWorld, galaxy_selector_worlds},
     };
     use std::time::{Duration, Instant};
 
@@ -343,6 +485,22 @@ mod tests {
         assert!(state.interactive_mode);
         assert!(state.full_quality_pending);
         assert_eq!(state.last_interaction, Some(now));
+    }
+
+    #[test]
+    fn scene_change_requests_full_quality_render() {
+        let mut state = clean_state();
+        let now = Instant::now();
+
+        state.mark_scene_changed();
+
+        assert!(state.scene_dirty);
+        assert!(!state.interactive_mode);
+        assert!(state.full_quality_pending);
+        assert_eq!(
+            state.next_render(now, FULL_QUALITY_DELAY),
+            Some(RenderQuality::Full)
+        );
     }
 
     #[test]
@@ -482,6 +640,99 @@ mod tests {
             Some(RenderQuality::Full)
         );
         assert_eq!(full_dimensions, (800, 600));
+    }
+
+    #[test]
+    fn mouse_coordinates_map_to_framebuffer_pixels() {
+        assert_eq!(
+            mouse_to_framebuffer_pixel(400.0, 300.0, 800, 600, 400, 300),
+            Some((200, 150))
+        );
+        assert_eq!(
+            mouse_to_framebuffer_pixel(799.9, 599.9, 800, 600, 400, 300),
+            Some((399, 299))
+        );
+    }
+
+    #[test]
+    fn mouse_coordinates_outside_window_are_ignored() {
+        assert_eq!(
+            mouse_to_framebuffer_pixel(-1.0, 10.0, 800, 600, 800, 600),
+            None
+        );
+        assert_eq!(
+            mouse_to_framebuffer_pixel(10.0, 600.0, 800, 600, 800, 600),
+            None
+        );
+        assert_eq!(
+            mouse_to_framebuffer_pixel(f32::NAN, 10.0, 800, 600, 800, 600),
+            None
+        );
+    }
+
+    #[test]
+    fn ray_picking_selects_blue_moon_when_ray_points_to_blue_selector() {
+        let worlds = galaxy_selector_worlds();
+        let blue = worlds
+            .iter()
+            .find(|world| world.planet == PlanetType::BlueMoon)
+            .unwrap();
+        let ray = Ray::new(
+            Vec3::new(blue.center.x, blue.center.y, 8.0),
+            blue.center - Vec3::new(blue.center.x, blue.center.y, 8.0),
+        );
+
+        assert_eq!(
+            pick_selector_world(&ray, &worlds),
+            Some(PlanetType::BlueMoon)
+        );
+    }
+
+    #[test]
+    fn ray_picking_selects_cookie_world_when_ray_points_to_cookie_selector() {
+        let worlds = galaxy_selector_worlds();
+        let cookie = worlds
+            .iter()
+            .find(|world| world.planet == PlanetType::CookieWorld)
+            .unwrap();
+        let ray = Ray::new(
+            Vec3::new(cookie.center.x, cookie.center.y, 8.0),
+            cookie.center - Vec3::new(cookie.center.x, cookie.center.y, 8.0),
+        );
+
+        assert_eq!(
+            pick_selector_world(&ray, &worlds),
+            Some(PlanetType::CookieWorld)
+        );
+    }
+
+    #[test]
+    fn ray_picking_returns_none_when_ray_misses_selector_worlds() {
+        let ray = Ray::new(Vec3::new(0.0, 5.0, 8.0), Vec3::new(0.0, 1.0, 0.0));
+
+        assert_eq!(pick_selector_world(&ray, &galaxy_selector_worlds()), None);
+    }
+
+    #[test]
+    fn ray_picking_uses_nearest_selector_hit() {
+        let worlds = [
+            SelectorWorld {
+                planet: PlanetType::CookieWorld,
+                center: Vec3::new(0.0, 0.0, -4.0),
+                radius: 1.0,
+            },
+            SelectorWorld {
+                planet: PlanetType::BlueMoon,
+                center: Vec3::new(0.0, 0.0, -2.0),
+                radius: 1.0,
+            },
+        ];
+        let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0));
+
+        assert_eq!(
+            pick_selector_world(&ray, &worlds),
+            Some(PlanetType::BlueMoon)
+        );
     }
 
     #[test]

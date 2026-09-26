@@ -79,6 +79,8 @@ const WRAPPER_COUNT: usize = 4;
 const AISLE_CLEAR_HALF_WIDTH: f32 = 0.18;
 #[cfg(test)]
 const MAX_REASONABLE_CINEMA_CUBES: usize = 200;
+#[cfg(test)]
+const EXPECTED_CINEMA_CUBES: usize = 173;
 
 const SEAT_FABRIC_TEXTURE_PATH: &str = "assets/textures/seat_fabric.ppm";
 const THEATER_CARPET_TEXTURE_PATH: &str = "assets/textures/theater_carpet.ppm";
@@ -1570,7 +1572,7 @@ fn add_cube_id(
     second_corner: Vec3,
     material_id: usize,
 ) -> Result<usize, CinemaBuildError> {
-    let cube_id = scene.cubes().len();
+    let cube_id = scene.object_count();
 
     scene.add_cube(Cube::new(first_corner, second_corner, material_id))?;
     metadata.elements.push((element, cube_id));
@@ -1596,11 +1598,11 @@ fn load_skybox(path: &'static str) -> Result<Skybox, CinemaBuildError> {
 mod tests {
     use super::{
         ACOUSTIC_PANEL_COLUMNS, AFTER_SHOW_DETAIL_CUBE_COUNT, AISLE_CLEAR_HALF_WIDTH,
-        AISLE_HALF_WIDTH, AfterShowDetail, BACK_Z, CinemaElement, FLOOR_Y, FRONT_Z,
-        HALF_ROOM_WIDTH, MAX_POPCORN_KERNELS, MAX_REASONABLE_CINEMA_CUBES, MIN_POPCORN_KERNELS,
-        PROJECTOR_MAX_PIECES, PROJECTOR_MIN_PIECES, ProjectorPart, ROOM_DEPTH, ROOM_HEIGHT,
-        ROOM_WIDTH, SCREEN_Z, SEAT_BACK_HEIGHT, SEAT_BLOCK_COUNT, SEAT_ROW_COUNT, SEATS_PER_BLOCK,
-        SEATS_PER_ROW, STEP_COUNT, TICKET_COUNT, TOTAL_SEATS, WRAPPER_COUNT,
+        AISLE_HALF_WIDTH, AfterShowDetail, BACK_Z, CinemaElement, EXPECTED_CINEMA_CUBES, FLOOR_Y,
+        FRONT_Z, HALF_ROOM_WIDTH, MAX_POPCORN_KERNELS, MAX_REASONABLE_CINEMA_CUBES,
+        MIN_POPCORN_KERNELS, PROJECTOR_MAX_PIECES, PROJECTOR_MIN_PIECES, ProjectorPart, ROOM_DEPTH,
+        ROOM_HEIGHT, ROOM_WIDTH, SCREEN_Z, SEAT_BACK_HEIGHT, SEAT_BLOCK_COUNT, SEAT_ROW_COUNT,
+        SEATS_PER_BLOCK, SEATS_PER_ROW, STEP_COUNT, TICKET_COUNT, TOTAL_SEATS, WRAPPER_COUNT,
         build_cinema_scene_with_metadata,
     };
     use crate::{
@@ -1645,6 +1647,19 @@ mod tests {
 
     fn cube_center(cube: &Cube) -> Vec3 {
         (cube.min + cube.max) * 0.5
+    }
+
+    fn cube(scene: &crate::scene::Scene, object_id: usize) -> &Cube {
+        scene.objects()[object_id]
+            .as_cube()
+            .expect("cinema metadata should reference cube objects")
+    }
+
+    fn cube_opt(scene: &crate::scene::Scene, object_id: usize) -> Option<&Cube> {
+        scene
+            .objects()
+            .get(object_id)
+            .and_then(|object| object.as_cube())
     }
 
     fn assert_positive_finite_dimensions(cube: &Cube) {
@@ -1704,7 +1719,7 @@ mod tests {
         let mut center = Vec3::ZERO;
 
         for cube_id in cube_ids {
-            center += cube_center(&scene.cubes()[*cube_id]);
+            center += cube_center(cube(scene, *cube_id));
         }
 
         center / cube_ids.len() as f32
@@ -1714,7 +1729,12 @@ mod tests {
     fn build_cinema_scene_returns_valid_scene_with_geometry() {
         let (scene, metadata) = built_scene();
 
-        assert!(!scene.cubes().is_empty());
+        assert_eq!(scene.object_count(), EXPECTED_CINEMA_CUBES);
+        assert_eq!(scene.cube_count(), EXPECTED_CINEMA_CUBES);
+        assert_eq!(scene.sphere_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
+        assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 0);
         assert_eq!(metadata.count(CinemaElement::Floor), 1);
         assert_eq!(metadata.count(CinemaElement::Screen), 1);
         assert_eq!(metadata.count(CinemaElement::LeftWall), 1);
@@ -1767,8 +1787,8 @@ mod tests {
         assert_eq!(projector.support_material_id, metal_id);
 
         for (part, cube_id) in projector.pieces() {
-            assert!(*cube_id < scene.cubes().len());
-            let cube = &scene.cubes()[*cube_id];
+            assert!(*cube_id < scene.object_count());
+            let cube = cube(&scene, *cube_id);
             assert_positive_finite_dimensions(cube);
             assert!(scene.material(cube.material_id).is_some());
 
@@ -1807,7 +1827,7 @@ mod tests {
             .fold(FLOOR_Y, f32::max);
 
         for cube_id in projector.cube_ids() {
-            let cube = &scene.cubes()[cube_id];
+            let cube = cube(&scene, cube_id);
 
             assert!(cube.max.x <= -AISLE_HALF_WIDTH || cube.min.x >= AISLE_HALF_WIDTH);
             assert!(cube.min.x > -HALF_ROOM_WIDTH);
@@ -1826,13 +1846,13 @@ mod tests {
         let projector_ids = projector.cube_ids();
 
         for projector_id in &projector_ids {
-            let projector_cube = &scene.cubes()[*projector_id];
+            let projector_cube = cube(&scene, *projector_id);
             assert!(!point_inside_cube(INITIAL_CAMERA_POSITION, projector_cube));
 
             for seat in metadata.seats() {
                 for seat_cube_id in seat.cube_ids() {
                     assert!(
-                        !cubes_overlap(projector_cube, &scene.cubes()[seat_cube_id]),
+                        !cubes_overlap(projector_cube, cube(&scene, seat_cube_id)),
                         "projector cube {projector_id} overlaps seat cube {seat_cube_id}"
                     );
                 }
@@ -1846,8 +1866,8 @@ mod tests {
         let projector = required_projector(&metadata);
         let body_id = projector.cube_ids_for(ProjectorPart::Body)[0];
         let lens_id = projector.cube_ids_for(ProjectorPart::Lens)[0];
-        let body = &scene.cubes()[body_id];
-        let lens = &scene.cubes()[lens_id];
+        let body = cube(&scene, body_id);
+        let lens = cube(&scene, lens_id);
         let direction = (projector.screen_center - projector.lens_position).normalized();
 
         assert!(lens.max.z < body.min.z);
@@ -1868,7 +1888,7 @@ mod tests {
         let (scene, metadata) = built_scene();
         let projector = required_projector(&metadata);
         let screen_id = metadata.cube_ids(CinemaElement::Screen)[0];
-        let screen_material_id = scene.cubes()[screen_id].material_id;
+        let screen_material_id = cube(&scene, screen_id).material_id;
         let ray = Ray::new(
             projector.lens_position,
             projector.screen_center - projector.lens_position,
@@ -1885,9 +1905,7 @@ mod tests {
     fn cinema_lighting_keeps_cold_screen_fill_and_warm_accents() {
         let (scene, metadata) = built_scene();
         let screen_id = metadata.cube_ids(CinemaElement::Screen)[0];
-        let screen_material = scene
-            .material(scene.cubes()[screen_id].material_id)
-            .unwrap();
+        let screen_material = scene.material(cube(&scene, screen_id).material_id).unwrap();
         let cold_lights = scene
             .lights()
             .iter()
@@ -1936,7 +1954,7 @@ mod tests {
 
         assert!(!box_ids.is_empty());
         for cube_id in box_ids {
-            let cube = &scene.cubes()[cube_id];
+            let cube = cube(&scene, cube_id);
             assert_positive_finite_dimensions(cube);
             assert_eq!(cube.material_id, after_show.popcorn_box_material_id);
         }
@@ -1959,7 +1977,7 @@ mod tests {
         assert!(popcorn_ids.len() <= MAX_POPCORN_KERNELS);
 
         for cube_id in popcorn_ids {
-            let cube = &scene.cubes()[cube_id];
+            let cube = cube(&scene, cube_id);
             let center = cube_center(cube);
 
             assert_eq!(cube.material_id, after_show.popcorn_kernel_material_id);
@@ -1981,7 +1999,7 @@ mod tests {
         assert!(cup_material.refractive_index >= 1.49);
 
         for cube_id in cup_ids {
-            let cube = &scene.cubes()[cube_id];
+            let cube = cube(&scene, cube_id);
             assert_eq!(cube.material_id, after_show.cup_material_id);
             assert_positive_finite_dimensions(cube);
         }
@@ -2001,7 +2019,7 @@ mod tests {
         assert!(spill_material.transparency <= 0.20);
 
         for cube_id in spill_ids {
-            let cube = &scene.cubes()[cube_id];
+            let cube = cube(&scene, cube_id);
 
             assert_eq!(cube.material_id, after_show.spill_material_id);
             assert!(cube.min.y > FLOOR_Y);
@@ -2021,7 +2039,7 @@ mod tests {
         assert!(metal_material.reflectivity > 0.7);
 
         for cube_id in can_ids {
-            let cube = &scene.cubes()[cube_id];
+            let cube = cube(&scene, cube_id);
             assert_eq!(cube.material_id, after_show.can_material_id);
             assert_positive_finite_dimensions(cube);
         }
@@ -2038,13 +2056,13 @@ mod tests {
         assert_eq!(wrapper_ids.len(), WRAPPER_COUNT);
 
         for cube_id in ticket_ids.iter().chain(wrapper_ids.iter()) {
-            let cube = &scene.cubes()[*cube_id];
+            let cube = cube(&scene, *cube_id);
             assert_eq!(cube.material_id, after_show.paper_material_id);
             assert_positive_finite_dimensions(cube);
         }
 
-        let ticket_width = cube_dimensions(&scene.cubes()[ticket_ids[0]]).x;
-        let wrapper_width = cube_dimensions(&scene.cubes()[wrapper_ids[0]]).x;
+        let ticket_width = cube_dimensions(cube(&scene, ticket_ids[0])).x;
+        let wrapper_width = cube_dimensions(cube(&scene, wrapper_ids[0])).x;
         assert!(ticket_width >= wrapper_width);
     }
 
@@ -2054,7 +2072,7 @@ mod tests {
         let after_show = required_after_show(&metadata);
 
         for cube_id in after_show.cube_ids() {
-            let cube = &scene.cubes()[cube_id];
+            let cube = cube(&scene, cube_id);
 
             assert_positive_finite_dimensions(cube);
             assert!(cube.min.y >= FLOOR_Y);
@@ -2073,7 +2091,7 @@ mod tests {
         let after_show = required_after_show(&metadata);
 
         for detail_id in after_show.cube_ids() {
-            let detail = &scene.cubes()[detail_id];
+            let detail = cube(&scene, detail_id);
 
             assert!(
                 detail.max.x <= -AISLE_CLEAR_HALF_WIDTH || detail.min.x >= AISLE_CLEAR_HALF_WIDTH
@@ -2082,7 +2100,7 @@ mod tests {
             for seat in metadata.seats() {
                 for seat_cube_id in seat.cube_ids() {
                     assert!(
-                        !cubes_overlap(detail, &scene.cubes()[seat_cube_id]),
+                        !cubes_overlap(detail, cube(&scene, seat_cube_id)),
                         "after-show detail cube {detail_id} overlaps seat cube {seat_cube_id}"
                     );
                 }
@@ -2095,14 +2113,14 @@ mod tests {
         let (scene, metadata) = built_scene();
         let projector = required_projector(&metadata);
         let screen_id = metadata.cube_ids(CinemaElement::Screen)[0];
-        let screen_material_id = scene.cubes()[screen_id].material_id;
+        let screen_material_id = cube(&scene, screen_id).material_id;
         let ray = Ray::new(
             projector.lens_position,
             projector.screen_center - projector.lens_position,
         );
         let hit = scene.intersect(&ray, 0.001, 100.0);
 
-        assert!(scene.cubes().len() < MAX_REASONABLE_CINEMA_CUBES);
+        assert!(scene.cube_count() < MAX_REASONABLE_CINEMA_CUBES);
         assert!(hit.is_some());
         if let Some(hit) = hit {
             assert_eq!(hit.material_id, screen_material_id);
@@ -2195,15 +2213,15 @@ mod tests {
 
         for seat in metadata.seats() {
             for cube_id in seat.cube_ids() {
-                assert!(cube_id < scene.cubes().len());
+                assert!(cube_id < scene.object_count());
 
-                if let Some(cube) = scene.cubes().get(cube_id) {
+                if let Some(cube) = cube_opt(&scene, cube_id) {
                     assert_positive_finite_dimensions(cube);
                     assert!(scene.material(cube.material_id).is_some());
                 }
             }
 
-            if let Some(cushion) = scene.cubes().get(seat.cushion_id) {
+            if let Some(cushion) = cube_opt(&scene, seat.cushion_id) {
                 assert_eq!(cushion.material_id, fabric_id);
                 assert!(
                     scene
@@ -2213,7 +2231,7 @@ mod tests {
                 );
             }
 
-            if let Some(back) = scene.cubes().get(seat.back_id) {
+            if let Some(back) = cube_opt(&scene, seat.back_id) {
                 assert_eq!(back.material_id, fabric_id);
                 assert!(
                     scene
@@ -2223,11 +2241,11 @@ mod tests {
                 );
             }
 
-            if let Some(left_arm) = scene.cubes().get(seat.left_arm_id) {
+            if let Some(left_arm) = cube_opt(&scene, seat.left_arm_id) {
                 assert_eq!(left_arm.material_id, metal_id);
             }
 
-            if let Some(right_arm) = scene.cubes().get(seat.right_arm_id) {
+            if let Some(right_arm) = cube_opt(&scene, seat.right_arm_id) {
                 assert_eq!(right_arm.material_id, metal_id);
             }
         }
@@ -2253,8 +2271,8 @@ mod tests {
 
             if let (Some(row_metadata), Some(cushion), Some(back)) = (
                 row_metadata,
-                scene.cubes().get(seat.cushion_id),
-                scene.cubes().get(seat.back_id),
+                cube_opt(&scene, seat.cushion_id),
+                cube_opt(&scene, seat.back_id),
             ) {
                 assert!(cushion.min.y >= row_metadata.platform_y);
                 assert!(back.min.z > cushion.max.z);
@@ -2271,7 +2289,7 @@ mod tests {
 
         for seat in metadata.seats() {
             for cube_id in seat.cube_ids() {
-                if let Some(cube) = scene.cubes().get(cube_id) {
+                if let Some(cube) = cube_opt(&scene, cube_id) {
                     assert!(cube.max.x <= -AISLE_HALF_WIDTH || cube.min.x >= AISLE_HALF_WIDTH);
                     assert!(cube.min.x > -HALF_ROOM_WIDTH);
                     assert!(cube.max.x < HALF_ROOM_WIDTH);
@@ -2284,7 +2302,7 @@ mod tests {
         let screen_hit = scene.intersect(&screen_ray, 0.001, 100.0);
         let screen_material_id = screen_ids
             .first()
-            .and_then(|screen_id| scene.cubes().get(*screen_id))
+            .and_then(|screen_id| cube_opt(&scene, *screen_id))
             .map(|screen_cube| screen_cube.material_id);
 
         assert!(screen_hit.is_some());
@@ -2314,7 +2332,7 @@ mod tests {
         assert!(target_seat.is_some());
 
         if let Some(target_seat) = target_seat
-            && let Some(cushion) = scene.cubes().get(target_seat.cushion_id)
+            && let Some(cushion) = cube_opt(&scene, target_seat.cushion_id)
         {
             let target = cube_center(cushion);
             let origin = target + Vec3::new(0.0, 0.32, -0.7);
@@ -2379,7 +2397,7 @@ mod tests {
         let screen_hit = scene.intersect(&screen_ray, 0.001, 100.0).unwrap();
         assert_eq!(
             screen_hit.material_id,
-            scene.cubes()[screen_ids[0]].material_id
+            cube(&scene, screen_ids[0]).material_id
         );
 
         let floor_ray = Ray::new(
@@ -2389,7 +2407,7 @@ mod tests {
         let floor_hit = scene.intersect(&floor_ray, 0.001, 100.0).unwrap();
         assert_eq!(
             floor_hit.material_id,
-            scene.cubes()[floor_ids[0]].material_id
+            cube(&scene, floor_ids[0]).material_id
         );
 
         let opening_ray = Ray::new(Vec3::new(0.0, 0.2, 4.65), Vec3::new(0.0, 0.2, 1.0));
@@ -2434,7 +2452,6 @@ mod tests {
         assert!(
             scene
                 .cubes()
-                .iter()
                 .all(|cube| !point_inside_cube(INITIAL_CAMERA_POSITION, cube))
         );
     }
@@ -2455,7 +2472,7 @@ mod tests {
         let screen_cube_id = metadata.cube_ids(CinemaElement::Screen)[0];
         let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
 
-        assert_eq!(hit.material_id, scene.cubes()[screen_cube_id].material_id);
+        assert_eq!(hit.material_id, cube(&scene, screen_cube_id).material_id);
         assert_ne!(color.to_u32(), Color::BLACK.to_u32());
     }
 }
