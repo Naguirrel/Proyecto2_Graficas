@@ -1,7 +1,6 @@
 use std::{error::Error, fmt};
 
 use crate::{
-    basis::Basis3,
     camera::OrbitCamera,
     color::Color,
     cone::{Cone, ConeError},
@@ -25,7 +24,7 @@ pub const LAUNCH_ASTEROID_CENTER: Vec3 = Vec3::new(-3.8, -0.25, 1.25);
 pub const LAUNCH_ASTEROID_RADIUS: f32 = 0.62;
 pub const COOKIE_PLANET_CENTER: Vec3 = Vec3::new(4.45, -0.30, -0.25);
 pub const COOKIE_PLANET_RADIUS: f32 = 1.45;
-pub const SPACE_LIGHT_PANEL_CENTER: Vec3 = Vec3::new(-4.85, 4.25, -2.55);
+pub const SPACE_SUN_DIRECTION: Vec3 = Vec3::new(-0.76, 0.54, -0.36);
 pub const BLUE_MOON_PIG_COUNT: usize = 3;
 pub const BLUE_MOON_BIRD_COUNT: usize = 3;
 pub const COOKIE_LEVEL_PIG_COUNT: usize = 2;
@@ -33,8 +32,10 @@ pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-2.85, 0.26, 0.0);
 pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 0.98;
 pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(2.65, -0.20, -0.28);
 pub const GALAXY_SELECTOR_COOKIE_RADIUS: f32 = 0.90;
-const SPACE_SKYBOX_WIDTH: usize = 96;
-const SPACE_SKYBOX_HEIGHT: usize = 48;
+const SPACE_SKYBOX_WIDTH: usize = 320;
+const SPACE_SKYBOX_HEIGHT: usize = 160;
+const SPACE_SUN_U: f32 = 0.07;
+const SPACE_SUN_V: f32 = 0.68;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneState {
@@ -82,7 +83,6 @@ struct SpaceMaterials {
     crater: usize,
     gravity_field: usize,
     cookie_gravity_field: usize,
-    light_panel: usize,
     asteroid: usize,
     cookie: usize,
     chocolate: usize,
@@ -111,7 +111,6 @@ pub(crate) struct SpaceSceneMetadata {
     pub launch_asteroid_id: Option<usize>,
     pub cookie_planet_id: Option<usize>,
     pub cookie_gravity_field_id: Option<usize>,
-    pub light_panel_id: Option<usize>,
     pub crater_count: usize,
     pub decorative_asteroid_count: usize,
     pub cookie_chocolate_chip_count: usize,
@@ -123,7 +122,6 @@ pub(crate) struct SpaceSceneMetadata {
     pub wood_parts: usize,
     pub ice_or_metal_parts: usize,
     pub tnt_parts: usize,
-    pub panel_light_count: usize,
 }
 
 impl fmt::Display for SpaceBuildError {
@@ -218,7 +216,7 @@ pub(crate) fn build_cookie_world_scene_with_metadata()
 pub fn build_galaxy_selector_scene() -> Result<Scene, SpaceBuildError> {
     let (mut scene, materials) = base_space_scene()?;
 
-    scene.set_ambient_light(Color::new(0.175, 0.205, 0.255));
+    scene.set_ambient_light(Color::new(0.300, 0.340, 0.405));
     add_selector_worlds(&mut scene, materials)?;
     add_selector_lighting(&mut scene);
 
@@ -236,10 +234,8 @@ pub(crate) fn build_space_levels_scene_with_metadata()
 
     add_blue_moon_world(&mut scene, &mut metadata, materials)?;
     add_cookie_level(&mut scene, &mut metadata, materials)?;
-    add_space_light_panel(&mut scene, &mut metadata, materials)?;
     add_space_lighting(&mut scene);
     add_cookie_level_lighting(&mut scene);
-    add_panel_lighting(&mut scene, &mut metadata);
 
     Ok((scene, metadata))
 }
@@ -310,11 +306,11 @@ pub fn galaxy_selector_worlds() -> [SelectorWorld; 2] {
 fn base_space_scene() -> Result<(Scene, SpaceMaterials), SpaceBuildError> {
     let mut scene = Scene::new();
 
-    scene.set_ambient_light(Color::new(0.145, 0.165, 0.205));
+    scene.set_ambient_light(Color::new(0.240, 0.280, 0.340));
     scene.set_skybox(
         Skybox::new(space_skybox_texture()?)
-            .with_intensity(1.12)
-            .with_horizontal_rotation(0.08),
+            .with_intensity(1.18)
+            .with_horizontal_rotation(0.0),
     );
     let materials = register_space_materials(&mut scene)?;
 
@@ -337,47 +333,62 @@ fn space_skybox_texture() -> Result<Texture, TextureError> {
 }
 
 fn space_skybox_color(u: f32, v: f32) -> Color {
-    let edge = Color::new(0.010, 0.040, 0.105);
-    let upper = Color::new(0.018, 0.075, 0.160);
-    let lower = Color::new(0.006, 0.030, 0.085);
-    let vertical = lower.lerp(upper, v);
-    let mut color = edge.lerp(vertical, 0.72);
+    let bottom = Color::new(0.006, 0.035, 0.100);
+    let top = Color::new(0.018, 0.110, 0.215);
+    let lateral = Color::new(0.010, 0.075, 0.165);
+    let mut color = bottom.lerp(top, smoothstep(0.0, 1.0, v));
+    color = color.lerp(lateral, smoothstep(0.0, 1.0, 1.0 - u) * 0.22);
 
-    let center_glow = radial_glow(u, v, 0.58, 0.56, 0.46);
-    let side_glow = radial_glow(u, v, 0.35, 0.48, 0.58);
-    color += Color::new(0.030, 0.300, 0.340) * center_glow;
-    color += Color::new(0.018, 0.135, 0.245) * side_glow;
+    let sun_distance = wrapped_uv_distance(u, v, SPACE_SUN_U, SPACE_SUN_V, 1.18);
+    let broad_halo = 1.0 - smoothstep(0.10, 0.48, sun_distance);
+    let warm_halo = 1.0 - smoothstep(0.050, 0.260, sun_distance);
+    let sun_disk = 1.0 - smoothstep(0.024, 0.034, sun_distance);
+    color += Color::new(0.055, 0.250, 0.300) * broad_halo;
+    color += Color::new(1.000, 0.620, 0.190) * (warm_halo * 0.46);
+    color += Color::new(1.000, 0.930, 0.680) * sun_disk;
 
-    let dust = smooth_hash(u * 52.0, v * 37.0) * 0.030;
-    color += Color::new(0.030, 0.075, 0.095) * dust;
+    let mist = smooth_hash(u * 41.0 + 9.0, v * 29.0 + 5.0) * 0.010;
+    color += Color::new(0.020, 0.070, 0.090) * mist;
 
     let star = star_strength(u, v);
     if star > 0.0 {
-        color += Color::WHITE * star;
+        color += Color::new(0.86, 0.96, 1.0) * (star * (1.0 - warm_halo * 0.65));
     }
 
     color.clamped()
 }
 
-fn radial_glow(u: f32, v: f32, center_u: f32, center_v: f32, radius: f32) -> f32 {
-    let du = ((u - center_u + 0.5).rem_euclid(1.0) - 0.5) / radius;
-    let dv = (v - center_v) / radius;
-    (1.0 - (du * du + dv * dv)).clamp(0.0, 1.0).powf(1.8)
+fn wrapped_uv_distance(u: f32, v: f32, center_u: f32, center_v: f32, u_scale: f32) -> f32 {
+    let du = ((u - center_u + 0.5).rem_euclid(1.0) - 0.5) * u_scale;
+    let dv = v - center_v;
+    (du * du + dv * dv).sqrt()
 }
 
 fn star_strength(u: f32, v: f32) -> f32 {
-    let cell_x = (u * 120.0).floor();
-    let cell_y = (v * 70.0).floor();
+    let grid_x = u * 230.0;
+    let grid_y = v * 126.0;
+    let cell_x = grid_x.floor();
+    let cell_y = grid_y.floor();
     let noise = smooth_hash(cell_x, cell_y);
 
-    if noise > 0.982 {
+    if noise > 0.978 {
+        let local_x = grid_x.fract() - 0.5;
+        let local_y = grid_y.fract() - 0.5;
+        let distance = (local_x * local_x + local_y * local_y).sqrt();
+        let radius = 0.14 + smooth_hash(cell_x + 17.0, cell_y + 31.0) * 0.09;
         let tint = smooth_hash(cell_x * 0.37 + 11.0, cell_y * 0.61 + 7.0);
-        let strength = ((noise - 0.982) / 0.018).clamp(0.0, 1.0);
+        let core = 1.0 - smoothstep(radius * 0.35, radius, distance);
+        let strength = ((noise - 0.978) / 0.022).clamp(0.0, 1.0);
 
-        0.35 + strength * (0.50 + tint * 0.15)
+        core * (0.42 + strength * (0.50 + tint * 0.15))
     } else {
         0.0
     }
+}
+
+fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 fn smooth_hash(x: f32, y: f32) -> f32 {
@@ -433,7 +444,7 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
 
     let moon = scene.add_material(
         Material::new(
-            Color::new(0.58, 0.65, 0.72),
+            Color::new(0.68, 0.80, 1.0),
             0.20,
             28.0,
             0.04,
@@ -444,7 +455,7 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         .with_texture(moon_texture, Vec2::new(4.0, 2.0), WrapMode::Repeat),
     )?;
     let crater = scene.add_material(Material::new(
-        Color::new(0.18, 0.21, 0.27),
+        Color::new(0.28, 0.34, 0.46),
         0.12,
         12.0,
         0.0,
@@ -453,34 +464,25 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         Color::BLACK,
     ))?;
     let gravity_field = scene.add_material(Material::new(
-        Color::new(0.42, 0.76, 1.0),
-        0.10,
-        52.0,
-        0.025,
-        0.965,
-        1.01,
-        Color::new(0.030, 0.075, 0.120),
+        Color::new(0.68, 0.90, 1.0),
+        0.08,
+        44.0,
+        0.010,
+        0.985,
+        1.005,
+        Color::new(0.020, 0.055, 0.105),
     ))?;
     let cookie_gravity_field = scene.add_material(Material::new(
-        Color::new(1.0, 0.70, 0.28),
-        0.10,
-        48.0,
-        0.020,
-        0.965,
-        1.01,
-        Color::new(0.115, 0.060, 0.015),
-    ))?;
-    let light_panel = scene.add_material(Material::new(
-        Color::new(0.66, 0.84, 1.0),
-        0.42,
-        64.0,
-        0.04,
-        0.0,
-        1.0,
-        Color::new(0.16, 0.26, 0.40),
+        Color::new(1.0, 0.82, 0.38),
+        0.08,
+        42.0,
+        0.010,
+        0.985,
+        1.005,
+        Color::new(0.080, 0.040, 0.010),
     ))?;
     let asteroid = scene.add_material(Material::new(
-        Color::new(0.42, 0.39, 0.36),
+        Color::new(0.52, 0.49, 0.45),
         0.18,
         16.0,
         0.02,
@@ -489,7 +491,7 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         Color::BLACK,
     ))?;
     let cookie = scene.add_material(Material::new(
-        Color::new(0.72, 0.45, 0.20),
+        Color::new(0.86, 0.56, 0.26),
         0.18,
         22.0,
         0.03,
@@ -498,7 +500,7 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         Color::BLACK,
     ))?;
     let chocolate = scene.add_material(Material::new(
-        Color::new(0.19, 0.08, 0.03),
+        Color::new(0.31, 0.14, 0.06),
         0.22,
         18.0,
         0.01,
@@ -640,7 +642,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         crater,
         gravity_field,
         cookie_gravity_field,
-        light_panel,
         asteroid,
         cookie,
         chocolate,
@@ -1136,88 +1137,46 @@ fn add_cookie_candy(
     Ok(())
 }
 
-fn add_space_light_panel(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    let panel_id = scene.object_count();
-    scene.add_oriented_box(OrientedBox::new(
-        SPACE_LIGHT_PANEL_CENTER,
-        Vec3::new(0.82, 0.030, 0.28),
-        Basis3::identity(),
-        materials.light_panel,
-    )?)?;
-    metadata.light_panel_id = Some(panel_id);
-
-    for (center, half_extents) in [
-        (
-            SPACE_LIGHT_PANEL_CENTER + Vec3::new(0.0, 0.012, -0.32),
-            Vec3::new(0.88, 0.025, 0.020),
-        ),
-        (
-            SPACE_LIGHT_PANEL_CENTER + Vec3::new(0.0, 0.012, 0.32),
-            Vec3::new(0.88, 0.025, 0.020),
-        ),
-        (
-            SPACE_LIGHT_PANEL_CENTER + Vec3::new(-0.88, 0.012, 0.0),
-            Vec3::new(0.020, 0.025, 0.32),
-        ),
-        (
-            SPACE_LIGHT_PANEL_CENTER + Vec3::new(0.88, 0.012, 0.0),
-            Vec3::new(0.020, 0.025, 0.32),
-        ),
-    ] {
-        scene.add_oriented_box(OrientedBox::new(
-            center,
-            half_extents,
-            Basis3::identity(),
-            materials.metal,
-        )?)?;
-        metadata.ice_or_metal_parts += 1;
-    }
-
-    Ok(())
-}
-
 fn add_selector_lighting(scene: &mut Scene) {
+    add_sun_key_light(scene, 66.0);
     scene.add_light(PointLight::new(
-        Vec3::new(-3.6, 4.2, 6.4),
-        Color::new(0.72, 0.92, 1.0),
-        13.0,
+        Vec3::new(0.0, 2.8, 7.4),
+        Color::new(0.62, 0.86, 1.0),
+        18.0,
     ));
     scene.add_light(PointLight::new(
-        Vec3::new(3.8, 2.0, 5.8),
-        Color::new(0.55, 0.86, 1.0),
-        6.6,
+        Vec3::new(4.4, 2.2, 5.2),
+        Color::new(0.46, 0.74, 1.0),
+        10.0,
     ));
     scene.add_light(PointLight::new(
-        Vec3::new(0.2, 3.1, 3.4),
+        Vec3::new(-2.6, -0.8, 4.0),
         Color::new(1.0, 0.78, 0.45),
-        4.2,
+        5.4,
     ));
 }
 
 fn add_space_lighting(scene: &mut Scene) {
+    add_sun_key_light(scene, 82.0);
     scene.add_light(PointLight::new(
-        Vec3::new(-5.2, 5.2, 7.4),
-        Color::new(0.76, 0.90, 1.0),
-        14.0,
+        Vec3::new(0.4, 3.0, 7.0),
+        Color::new(0.58, 0.82, 1.0),
+        22.0,
     ));
     scene.add_light(PointLight::new(
-        Vec3::new(4.6, 2.0, 5.6),
-        Color::new(0.38, 0.64, 1.0),
-        5.8,
+        Vec3::new(5.0, 2.4, 5.4),
+        Color::new(0.44, 0.68, 1.0),
+        12.5,
     ));
     scene.add_light(PointLight::new(
-        Vec3::new(0.4, 3.0, 4.6),
-        Color::new(1.0, 0.72, 0.36),
-        4.2,
+        Vec3::new(-2.4, -0.9, 4.8),
+        Color::new(1.0, 0.78, 0.46),
+        7.0,
     ));
     scene.add_light(PointLight::new(
-        Vec3::new(-1.4, -1.2, 5.0),
-        Color::new(0.34, 0.70, 1.0),
-        2.4,
+        Vec3::new(-5.2, 0.4, 1.6),
+        Color::new(0.36, 0.78, 1.0),
+        7.5,
     ));
 }
 
@@ -1225,31 +1184,25 @@ fn add_cookie_level_lighting(scene: &mut Scene) {
     scene.add_light(PointLight::new(
         Vec3::new(5.9, 3.0, 5.4),
         Color::new(1.0, 0.70, 0.34),
-        6.0,
+        8.0,
     ));
     scene.add_light(PointLight::new(
         Vec3::new(3.3, -0.2, 3.8),
         Color::new(0.72, 0.42, 1.0),
-        2.2,
+        3.4,
     ));
 }
 
-fn add_panel_lighting(scene: &mut Scene, metadata: &mut SpaceSceneMetadata) {
-    for (position, color, intensity) in [
-        (
-            SPACE_LIGHT_PANEL_CENTER + Vec3::new(-0.45, -0.24, 0.16),
-            Color::new(0.72, 0.88, 1.0),
-            2.0,
-        ),
-        (
-            SPACE_LIGHT_PANEL_CENTER + Vec3::new(0.40, -0.22, -0.10),
-            Color::new(0.82, 0.94, 1.0),
-            1.7,
-        ),
-    ] {
-        scene.add_light(PointLight::new(position, color, intensity));
-        metadata.panel_light_count += 1;
-    }
+fn add_sun_key_light(scene: &mut Scene, intensity: f32) {
+    scene.add_light(PointLight::new(
+        sun_light_position(10.0),
+        Color::new(1.0, 0.88, 0.58),
+        intensity,
+    ));
+}
+
+fn sun_light_position(distance: f32) -> Vec3 {
+    SPACE_SUN_DIRECTION.normalized() * distance
 }
 
 fn add_space_pig(
@@ -1447,12 +1400,13 @@ mod tests {
         BLUE_MOON_BIRD_COUNT, BLUE_MOON_PIG_COUNT, BLUE_MOON_PLANET_CENTER,
         BLUE_MOON_PLANET_RADIUS, COOKIE_LEVEL_PIG_COUNT, COOKIE_PLANET_CENTER,
         COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
-        LAUNCH_ASTEROID_CENTER, PlanetType, SPACE_LIGHT_PANEL_CENTER, SceneState, SpaceMaterials,
-        add_radial_box, blue_moon_orbit_camera, build_blue_moon_scene_with_metadata,
-        build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
-        build_space_levels_scene_with_metadata, cookie_world_orbit_camera,
-        galaxy_selector_orbit_camera, galaxy_selector_worlds, main_moon_frame,
-        register_space_materials, space_levels_orbit_camera, space_skybox_texture,
+        LAUNCH_ASTEROID_CENTER, PlanetType, SPACE_SUN_DIRECTION, SPACE_SUN_U, SPACE_SUN_V,
+        SceneState, SpaceMaterials, add_radial_box, blue_moon_orbit_camera,
+        build_blue_moon_scene_with_metadata, build_cookie_world_scene_with_metadata,
+        build_galaxy_selector_scene, build_space_levels_scene_with_metadata,
+        cookie_world_orbit_camera, galaxy_selector_orbit_camera, galaxy_selector_worlds,
+        main_moon_frame, register_space_materials, space_levels_orbit_camera, space_skybox_color,
+        space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
     use crate::{material::Material, math::Vec3, ray::Ray, scene::Scene};
 
@@ -1501,34 +1455,69 @@ mod tests {
         assert_eq!(scene.object_count(), 4);
         assert!(scene.skybox().is_some());
         assert!(scene.lights().len() >= 3);
-        assert!(scene.ambient_light().b > 0.24);
+        assert!(scene.ambient_light().b > 0.39);
     }
 
     #[test]
-    fn space_skybox_is_dense_smooth_and_starred() {
+    fn space_skybox_is_dense_smooth_starred_and_sunlit() {
         let texture = space_skybox_texture().unwrap();
-        let top = texture.pixel(48, 4).unwrap();
-        let middle = texture.pixel(56, 24).unwrap();
-        let bottom = texture.pixel(48, 43).unwrap();
+        let top = texture
+            .pixel(texture.width() / 2, texture.height() / 12)
+            .unwrap();
+        let middle = texture
+            .pixel(texture.width() / 2, texture.height() / 2)
+            .unwrap();
+        let bottom = texture
+            .pixel(
+                texture.width() / 2,
+                texture.height() - texture.height() / 12,
+            )
+            .unwrap();
+        let sun = space_skybox_color(SPACE_SUN_U, SPACE_SUN_V);
         let mut bright_pixels = 0;
 
         for y in 0..texture.height() {
             for x in 0..texture.width() {
                 let color = texture.pixel(x, y).unwrap();
+                let u = x as f32 / texture.width() as f32;
+                let v = 1.0 - y as f32 / (texture.height() - 1) as f32;
 
-                if color.r > 0.70 && color.g > 0.70 && color.b > 0.70 {
+                if wrapped_uv_distance(u, v, SPACE_SUN_U, SPACE_SUN_V, 1.18) > 0.08
+                    && color.r > 0.62
+                    && color.g > 0.68
+                    && color.b > 0.74
+                {
                     bright_pixels += 1;
                 }
             }
         }
 
-        assert!(texture.width() >= 64);
-        assert!(texture.height() >= 32);
+        assert!(texture.width() >= 256);
+        assert!(texture.height() >= 128);
         assert_ne!(top, middle);
         assert_ne!(bottom, middle);
-        assert!(middle.g > top.g);
+        assert!(sun.r > 0.95);
+        assert!(sun.g > 0.85);
+        assert!(sun.b > 0.55);
         assert!(middle.b > bottom.b);
-        assert!(bright_pixels >= 8);
+        assert!(bright_pixels >= 12);
+    }
+
+    #[test]
+    fn space_lighting_uses_visible_sun_direction_as_key() {
+        let selector = build_galaxy_selector_scene().unwrap();
+        let (blue, _) = build_blue_moon_scene_with_metadata().unwrap();
+        let expected_direction = SPACE_SUN_DIRECTION.normalized();
+
+        for scene in [&selector, &blue] {
+            let key_light = scene.lights()[0];
+            let actual_direction = key_light.position.normalized();
+
+            assert!(actual_direction.dot(expected_direction) > 0.999);
+            assert_eq!(key_light.position, sun_light_position(10.0));
+            assert!(key_light.color.r > key_light.color.b);
+            assert!(key_light.intensity >= 60.0);
+        }
     }
 
     #[test]
@@ -1703,7 +1692,7 @@ mod tests {
         assert!(metadata.candy_count >= 6);
         assert!(scene.sphere_count() >= 35);
         assert!(scene.cylinder_count() >= 28);
-        assert!(scene.oriented_box_count() >= 30);
+        assert!(scene.oriented_box_count() >= 26);
     }
 
     #[test]
@@ -1721,22 +1710,23 @@ mod tests {
     }
 
     #[test]
-    fn space_levels_scene_has_emissive_light_panel_and_panel_lights() {
-        let (scene, metadata) = build_space_levels_scene_with_metadata().unwrap();
-        let panel = scene.objects()[metadata.light_panel_id.unwrap()]
-            .as_oriented_box()
-            .unwrap();
-        let material = scene.material(panel.material_id()).unwrap();
+    fn space_levels_scene_has_no_visible_emissive_light_panels() {
+        let (scene, _) = build_space_levels_scene_with_metadata().unwrap();
+        let bright_flat_panels = scene
+            .objects()
+            .iter()
+            .filter_map(|object| object.as_oriented_box())
+            .filter(|box_object| {
+                let material = scene.material(box_object.material_id()).unwrap();
+                let emission = material.emission;
 
-        assert_eq!(panel.center(), SPACE_LIGHT_PANEL_CENTER);
-        assert!(panel.half_extents().x > panel.half_extents().z);
-        assert!(panel.half_extents().y < 0.10);
-        assert!(panel.half_extents().x < 1.0);
-        assert!(material.emission.b > 0.30);
-        assert!(material.emission.b < 0.55);
-        assert!(material.emission.r < 0.25);
-        assert!(metadata.panel_light_count >= 2);
-        assert!(scene.lights().len() >= metadata.panel_light_count);
+                box_object.half_extents().y < 0.10
+                    && box_object.half_extents().x > box_object.half_extents().z * 2.0
+                    && emission.b > 0.20
+            })
+            .count();
+
+        assert_eq!(bright_flat_panels, 0);
     }
 
     #[test]
