@@ -29,6 +29,29 @@ pub const SPACE_LIGHT_PANEL_CENTER: Vec3 = Vec3::new(-2.35, 3.45, 3.15);
 pub const BLUE_MOON_PIG_COUNT: usize = 3;
 pub const BLUE_MOON_BIRD_COUNT: usize = 3;
 pub const COOKIE_LEVEL_PIG_COUNT: usize = 2;
+pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-2.25, 0.18, 0.0);
+pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 1.05;
+pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(2.25, -0.12, -0.22);
+pub const GALAXY_SELECTOR_COOKIE_RADIUS: f32 = 0.98;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SceneState {
+    Galaxy,
+    Planet(PlanetType),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanetType {
+    BlueMoon,
+    CookieWorld,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SelectorWorld {
+    pub planet: PlanetType,
+    pub center: Vec3,
+    pub radius: f32,
+}
 
 const BLUE_MOON_TEXTURE: &str = "\
 P3
@@ -188,6 +211,33 @@ pub(crate) fn build_blue_moon_scene_with_metadata()
     Ok((scene, metadata))
 }
 
+pub fn build_cookie_world_scene() -> Result<Scene, SpaceBuildError> {
+    build_cookie_world_scene_with_metadata().map(|built| built.0)
+}
+
+pub(crate) fn build_cookie_world_scene_with_metadata()
+-> Result<(Scene, SpaceSceneMetadata), SpaceBuildError> {
+    let (mut scene, materials) = base_space_scene()?;
+    let mut metadata = SpaceSceneMetadata::default();
+
+    add_cookie_level(&mut scene, &mut metadata, materials)?;
+    add_space_lighting(&mut scene);
+    add_cookie_level_lighting(&mut scene);
+
+    Ok((scene, metadata))
+}
+
+pub fn build_galaxy_selector_scene() -> Result<Scene, SpaceBuildError> {
+    let (mut scene, materials) = base_space_scene()?;
+
+    scene.set_ambient_light(Color::new(0.075, 0.085, 0.130));
+    add_selector_worlds(&mut scene, materials)?;
+    add_space_lighting(&mut scene);
+    add_cookie_level_lighting(&mut scene);
+
+    Ok(scene)
+}
+
 pub fn build_space_levels_scene() -> Result<Scene, SpaceBuildError> {
     build_space_levels_scene_with_metadata().map(|built| built.0)
 }
@@ -219,6 +269,30 @@ pub fn blue_moon_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
     )
 }
 
+pub fn cookie_world_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
+    OrbitCamera::new(
+        COOKIE_PLANET_CENTER + Vec3::new(-0.12, 0.18, 0.0),
+        -0.30,
+        0.16,
+        6.2,
+        58.0,
+        aspect_ratio,
+        Vec3::new(0.0, 1.0, 0.0),
+    )
+}
+
+pub fn galaxy_selector_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
+    OrbitCamera::new(
+        Vec3::new(0.0, 0.0, -0.05),
+        0.0,
+        0.08,
+        7.8,
+        56.0,
+        aspect_ratio,
+        Vec3::new(0.0, 1.0, 0.0),
+    )
+}
+
 pub fn space_levels_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
     OrbitCamera::new(
         Vec3::new(1.35, 0.20, 0.00),
@@ -229,6 +303,21 @@ pub fn space_levels_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
         aspect_ratio,
         Vec3::new(0.0, 1.0, 0.0),
     )
+}
+
+pub fn galaxy_selector_worlds() -> [SelectorWorld; 2] {
+    [
+        SelectorWorld {
+            planet: PlanetType::BlueMoon,
+            center: GALAXY_SELECTOR_BLUE_MOON_CENTER,
+            radius: GALAXY_SELECTOR_BLUE_MOON_RADIUS,
+        },
+        SelectorWorld {
+            planet: PlanetType::CookieWorld,
+            center: GALAXY_SELECTOR_COOKIE_CENTER,
+            radius: GALAXY_SELECTOR_COOKIE_RADIUS,
+        },
+    ]
 }
 
 fn base_space_scene() -> Result<(Scene, SpaceMaterials), SpaceBuildError> {
@@ -243,6 +332,34 @@ fn base_space_scene() -> Result<(Scene, SpaceMaterials), SpaceBuildError> {
     let materials = register_space_materials(&mut scene)?;
 
     Ok((scene, materials))
+}
+
+fn add_selector_worlds(
+    scene: &mut Scene,
+    materials: SpaceMaterials,
+) -> Result<(), SpaceBuildError> {
+    scene.add_sphere(Sphere::new(
+        GALAXY_SELECTOR_BLUE_MOON_CENTER,
+        GALAXY_SELECTOR_BLUE_MOON_RADIUS * 1.28,
+        materials.gravity_field,
+    )?)?;
+    scene.add_sphere(Sphere::new(
+        GALAXY_SELECTOR_BLUE_MOON_CENTER,
+        GALAXY_SELECTOR_BLUE_MOON_RADIUS,
+        materials.moon,
+    )?)?;
+    scene.add_sphere(Sphere::new(
+        GALAXY_SELECTOR_COOKIE_CENTER,
+        GALAXY_SELECTOR_COOKIE_RADIUS * 1.25,
+        materials.cookie_gravity_field,
+    )?)?;
+    scene.add_sphere(Sphere::new(
+        GALAXY_SELECTOR_COOKIE_CENTER,
+        GALAXY_SELECTOR_COOKIE_RADIUS,
+        materials.cookie,
+    )?)?;
+
+    Ok(())
 }
 
 fn add_blue_moon_world(
@@ -1255,10 +1372,13 @@ mod tests {
     use super::{
         BLUE_MOON_BIRD_COUNT, BLUE_MOON_PIG_COUNT, BLUE_MOON_PLANET_CENTER,
         BLUE_MOON_PLANET_RADIUS, COOKIE_LEVEL_PIG_COUNT, COOKIE_PLANET_CENTER,
-        COOKIE_PLANET_RADIUS, LAUNCH_ASTEROID_CENTER, SPACE_LIGHT_PANEL_CENTER, SpaceMaterials,
+        COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
+        LAUNCH_ASTEROID_CENTER, PlanetType, SPACE_LIGHT_PANEL_CENTER, SceneState, SpaceMaterials,
         add_radial_box, blue_moon_orbit_camera, build_blue_moon_scene_with_metadata,
-        build_space_levels_scene_with_metadata, main_moon_frame, register_space_materials,
-        space_levels_orbit_camera,
+        build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
+        build_space_levels_scene_with_metadata, cookie_world_orbit_camera,
+        galaxy_selector_orbit_camera, galaxy_selector_worlds, main_moon_frame,
+        register_space_materials, space_levels_orbit_camera,
     };
     use crate::{material::Material, math::Vec3, ray::Ray, scene::Scene};
 
@@ -1271,6 +1391,42 @@ mod tests {
         assert!(metadata.planet_id.is_some());
         assert!(metadata.gravity_field_id.is_some());
         assert!(metadata.launch_asteroid_id.is_some());
+    }
+
+    #[test]
+    fn scene_state_can_represent_selector_and_planets() {
+        assert_eq!(SceneState::Galaxy, SceneState::Galaxy);
+        assert_eq!(
+            SceneState::Planet(PlanetType::BlueMoon),
+            SceneState::Planet(PlanetType::BlueMoon)
+        );
+        assert_ne!(
+            SceneState::Planet(PlanetType::BlueMoon),
+            SceneState::Planet(PlanetType::CookieWorld)
+        );
+    }
+
+    #[test]
+    fn galaxy_selector_declares_two_clickable_worlds() {
+        let worlds = galaxy_selector_worlds();
+
+        assert_eq!(worlds.len(), 2);
+        assert_eq!(worlds[0].planet, PlanetType::BlueMoon);
+        assert_eq!(worlds[0].center, GALAXY_SELECTOR_BLUE_MOON_CENTER);
+        assert!(worlds[0].radius > 0.0);
+        assert_eq!(worlds[1].planet, PlanetType::CookieWorld);
+        assert_eq!(worlds[1].center, GALAXY_SELECTOR_COOKIE_CENTER);
+        assert!(worlds[1].radius > 0.0);
+    }
+
+    #[test]
+    fn galaxy_selector_scene_contains_only_selector_world_geometry() {
+        let scene = build_galaxy_selector_scene().unwrap();
+
+        assert_eq!(scene.sphere_count(), 4);
+        assert_eq!(scene.object_count(), 4);
+        assert!(scene.skybox().is_some());
+        assert!(scene.lights().len() >= 5);
     }
 
     #[test]
@@ -1397,6 +1553,28 @@ mod tests {
     }
 
     #[test]
+    fn cookie_world_scene_contains_cookie_world_elements() {
+        let (scene, metadata) = build_cookie_world_scene_with_metadata().unwrap();
+        let cookie = scene.objects()[metadata.cookie_planet_id.unwrap()]
+            .as_sphere()
+            .unwrap();
+
+        assert_eq!(cookie.center(), COOKIE_PLANET_CENTER);
+        assert_eq!(cookie.radius(), COOKIE_PLANET_RADIUS);
+        assert_eq!(metadata.cookie_pig_count, COOKIE_LEVEL_PIG_COUNT);
+        assert_eq!(metadata.pig_count, COOKIE_LEVEL_PIG_COUNT);
+        assert!(metadata.cookie_chocolate_chip_count >= 8);
+        assert!(metadata.candy_count >= 6);
+        assert!(metadata.wood_parts >= 3);
+        assert!(metadata.ice_or_metal_parts >= 2);
+        assert!(metadata.tnt_parts >= 1);
+        assert!(metadata.cookie_gravity_field_id.is_some());
+        assert!(metadata.planet_id.is_none());
+        assert!(metadata.launch_asteroid_id.is_none());
+        assert!(scene.skybox().is_some());
+    }
+
+    #[test]
     fn space_levels_scene_keeps_pigs_birds_and_launcher() {
         let (_, metadata) = build_space_levels_scene_with_metadata().unwrap();
 
@@ -1463,6 +1641,42 @@ mod tests {
             (camera.position - BLUE_MOON_PLANET_CENTER).length() > BLUE_MOON_PLANET_RADIUS * 1.30
         );
         assert!((camera.position - COOKIE_PLANET_CENTER).length() > COOKIE_PLANET_RADIUS * 1.28);
+        assert!(hit.distance > 1.0);
+    }
+
+    #[test]
+    fn selector_camera_is_outside_and_can_see_selector_worlds() {
+        let scene = build_galaxy_selector_scene().unwrap();
+        let camera = galaxy_selector_orbit_camera(4.0 / 3.0).to_camera();
+        let blue_ray = Ray::new(
+            camera.position,
+            GALAXY_SELECTOR_BLUE_MOON_CENTER - camera.position,
+        );
+        let cookie_ray = Ray::new(
+            camera.position,
+            GALAXY_SELECTOR_COOKIE_CENTER - camera.position,
+        );
+
+        assert!(
+            (camera.position - GALAXY_SELECTOR_BLUE_MOON_CENTER).length()
+                > super::GALAXY_SELECTOR_BLUE_MOON_RADIUS * 1.30
+        );
+        assert!(
+            (camera.position - GALAXY_SELECTOR_COOKIE_CENTER).length()
+                > super::GALAXY_SELECTOR_COOKIE_RADIUS * 1.30
+        );
+        assert!(scene.intersect(&blue_ray, 0.001, 100.0).is_some());
+        assert!(scene.intersect(&cookie_ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn cookie_world_camera_is_outside_and_sees_cookie_world() {
+        let (scene, _) = build_cookie_world_scene_with_metadata().unwrap();
+        let camera = cookie_world_orbit_camera(4.0 / 3.0).to_camera();
+        let central_ray = Ray::new(camera.position, camera.target - camera.position);
+        let hit = scene.intersect(&central_ray, 0.001, 100.0).unwrap();
+
+        assert!((camera.position - COOKIE_PLANET_CENTER).length() > COOKIE_PLANET_RADIUS * 1.30);
         assert!(hit.distance > 1.0);
     }
 }
