@@ -34,8 +34,14 @@ pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(2.65, -0.20, -0.28);
 pub const GALAXY_SELECTOR_COOKIE_RADIUS: f32 = 0.90;
 const SPACE_SKYBOX_WIDTH: usize = 320;
 const SPACE_SKYBOX_HEIGHT: usize = 160;
-const SPACE_SUN_U: f32 = 0.07;
-const SPACE_SUN_V: f32 = 0.68;
+const SPACE_SUN_U: f32 = 0.125;
+const SPACE_SUN_V: f32 = 0.770;
+const SKYBOX_ASTEROID_A_U: f32 = 0.675;
+const SKYBOX_ASTEROID_A_V: f32 = 0.620;
+const SKYBOX_ASTEROID_B_U: f32 = 0.835;
+const SKYBOX_ASTEROID_B_V: f32 = 0.455;
+const SKYBOX_ASTEROID_C_U: f32 = 0.425;
+const SKYBOX_ASTEROID_C_V: f32 = 0.730;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneState {
@@ -54,6 +60,16 @@ pub struct SelectorWorld {
     pub planet: PlanetType,
     pub center: Vec3,
     pub radius: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SkyboxAsteroid {
+    center_u: f32,
+    center_v: f32,
+    radius: f32,
+    stretch: f32,
+    opacity: f32,
+    seed: f32,
 }
 
 const BLUE_MOON_TEXTURE: &str = "\
@@ -307,14 +323,16 @@ fn base_space_scene() -> Result<(Scene, SpaceMaterials), SpaceBuildError> {
     let mut scene = Scene::new();
 
     scene.set_ambient_light(Color::new(0.240, 0.280, 0.340));
-    scene.set_skybox(
-        Skybox::new(space_skybox_texture()?)
-            .with_intensity(1.18)
-            .with_horizontal_rotation(0.0),
-    );
+    scene.set_skybox(angry_birds_space_skybox()?);
     let materials = register_space_materials(&mut scene)?;
 
     Ok((scene, materials))
+}
+
+fn angry_birds_space_skybox() -> Result<Skybox, TextureError> {
+    Ok(Skybox::new(space_skybox_texture()?)
+        .with_intensity(1.18)
+        .with_horizontal_rotation(0.0))
 }
 
 fn space_skybox_texture() -> Result<Texture, TextureError> {
@@ -333,19 +351,21 @@ fn space_skybox_texture() -> Result<Texture, TextureError> {
 }
 
 fn space_skybox_color(u: f32, v: f32) -> Color {
-    let bottom = Color::new(0.006, 0.035, 0.100);
-    let top = Color::new(0.018, 0.110, 0.215);
-    let lateral = Color::new(0.010, 0.075, 0.165);
+    let bottom = Color::new(0.010, 0.045, 0.130);
+    let top = Color::new(0.020, 0.095, 0.230);
+    let lateral = Color::new(0.012, 0.070, 0.190);
     let mut color = bottom.lerp(top, smoothstep(0.0, 1.0, v));
-    color = color.lerp(lateral, smoothstep(0.0, 1.0, 1.0 - u) * 0.22);
+    color = color.lerp(lateral, smoothstep(0.0, 1.0, 1.0 - u) * 0.26);
+
+    color = add_cartoon_cloud_layers(color, u, v);
 
     let sun_distance = wrapped_uv_distance(u, v, SPACE_SUN_U, SPACE_SUN_V, 1.18);
-    let broad_halo = 1.0 - smoothstep(0.10, 0.48, sun_distance);
-    let warm_halo = 1.0 - smoothstep(0.050, 0.260, sun_distance);
-    let sun_disk = 1.0 - smoothstep(0.024, 0.034, sun_distance);
-    color += Color::new(0.055, 0.250, 0.300) * broad_halo;
-    color += Color::new(1.000, 0.620, 0.190) * (warm_halo * 0.46);
-    color += Color::new(1.000, 0.930, 0.680) * sun_disk;
+    let broad_halo = 1.0 - smoothstep(0.13, 0.46, sun_distance);
+    let warm_halo = 1.0 - smoothstep(0.065, 0.290, sun_distance);
+    color += Color::new(0.070, 0.260, 0.310) * (broad_halo * 0.78);
+    color += Color::new(1.000, 0.600, 0.150) * (warm_halo * 0.42);
+
+    color = add_cartoon_sun(color, u, v, sun_distance);
 
     let mist = smooth_hash(u * 41.0 + 9.0, v * 29.0 + 5.0) * 0.010;
     color += Color::new(0.020, 0.070, 0.090) * mist;
@@ -355,7 +375,153 @@ fn space_skybox_color(u: f32, v: f32) -> Color {
         color += Color::new(0.86, 0.96, 1.0) * (star * (1.0 - warm_halo * 0.65));
     }
 
+    color = add_background_asteroids(color, u, v);
+
     color.clamped()
+}
+
+fn add_cartoon_sun(color: Color, u: f32, v: f32, sun_distance: f32) -> Color {
+    let disk = 1.0 - smoothstep(0.066, 0.086, sun_distance);
+    if disk <= 0.0 {
+        return color;
+    }
+
+    let inner_glow = 1.0 - smoothstep(0.0, 0.078, sun_distance);
+    let mut sun_color =
+        Color::new(1.0, 0.720, 0.180).lerp(Color::new(1.0, 0.930, 0.520), inner_glow);
+    let mottling = smooth_hash(u * 62.0 + 5.0, v * 51.0 + 17.0) * 0.12;
+    sun_color += Color::new(0.060, 0.025, 0.0) * mottling;
+
+    let spot_a = 1.0 - smoothstep(0.014, 0.034, wrapped_uv_distance(u, v, 0.100, 0.790, 1.35));
+    let spot_b = 1.0 - smoothstep(0.011, 0.028, wrapped_uv_distance(u, v, 0.145, 0.735, 1.35));
+    let spot_c = 1.0 - smoothstep(0.009, 0.023, wrapped_uv_distance(u, v, 0.170, 0.812, 1.35));
+    let spots = (spot_a * 0.34 + spot_b * 0.26 + spot_c * 0.22).clamp(0.0, 0.45);
+    sun_color = sun_color.lerp(Color::new(0.900, 0.430, 0.090), spots);
+
+    color.lerp(sun_color, disk)
+}
+
+fn add_cartoon_cloud_layers(color: Color, u: f32, v: f32) -> Color {
+    let lower_back = cloud_band(u, v, 0.220, 0.070, 0.038, 2.8, 0.25);
+    let lower_front = cloud_band(u, v, 0.120, 0.052, 0.030, 4.0, 1.10);
+    let left_side = side_cloud(u, v, 0.045, 0.55, 0.055, 5.2);
+    let right_side = side_cloud(1.0 - u, v, 0.018, 0.45, 0.045, 3.5);
+
+    let color = color.lerp(Color::new(0.030, 0.145, 0.295), lower_back * 0.52);
+    let color = color.lerp(Color::new(0.020, 0.098, 0.245), lower_front * 0.68);
+    let color = color.lerp(Color::new(0.020, 0.120, 0.290), left_side * 0.48);
+
+    color.lerp(Color::new(0.014, 0.080, 0.210), right_side * 0.40)
+}
+
+fn cloud_band(
+    u: f32,
+    v: f32,
+    base_v: f32,
+    height: f32,
+    softness: f32,
+    frequency: f32,
+    phase: f32,
+) -> f32 {
+    let wave = (u * frequency * std::f32::consts::TAU + phase).sin() * height
+        + (u * (frequency * 1.8) * std::f32::consts::TAU + phase * 0.7).sin() * height * 0.45;
+    let top_edge = base_v + wave;
+
+    1.0 - smoothstep(top_edge - softness, top_edge + softness, v)
+}
+
+fn side_cloud(
+    u_from_edge: f32,
+    v: f32,
+    width: f32,
+    center_v: f32,
+    softness: f32,
+    frequency: f32,
+) -> f32 {
+    let edge = 1.0 - smoothstep(width, width + 0.16, u_from_edge);
+    let vertical = 1.0
+        - smoothstep(
+            softness,
+            softness + 0.30,
+            (v - center_v - (u_from_edge * frequency).sin() * 0.05).abs(),
+        );
+
+    (edge * vertical * (1.0 - smoothstep(0.78, 1.0, v))).clamp(0.0, 1.0)
+}
+
+fn add_background_asteroids(color: Color, u: f32, v: f32) -> Color {
+    [
+        SkyboxAsteroid {
+            center_u: SKYBOX_ASTEROID_A_U,
+            center_v: SKYBOX_ASTEROID_A_V,
+            radius: 0.054,
+            stretch: 1.10,
+            opacity: 0.80,
+            seed: 3.0,
+        },
+        SkyboxAsteroid {
+            center_u: SKYBOX_ASTEROID_B_U,
+            center_v: SKYBOX_ASTEROID_B_V,
+            radius: 0.036,
+            stretch: 0.84,
+            opacity: 0.58,
+            seed: 7.0,
+        },
+        SkyboxAsteroid {
+            center_u: SKYBOX_ASTEROID_C_U,
+            center_v: SKYBOX_ASTEROID_C_V,
+            radius: 0.030,
+            stretch: 1.28,
+            opacity: 0.46,
+            seed: 13.0,
+        },
+    ]
+    .into_iter()
+    .fold(color, |color, asteroid| {
+        add_background_asteroid(color, u, v, asteroid)
+    })
+}
+
+fn add_background_asteroid(color: Color, u: f32, v: f32, asteroid: SkyboxAsteroid) -> Color {
+    let du = ((u - asteroid.center_u + 0.5).rem_euclid(1.0) - 0.5) / asteroid.radius;
+    let dv = (v - asteroid.center_v) / (asteroid.radius * asteroid.stretch);
+    let angle = dv.atan2(du);
+    let distance = (du * du + dv * dv).sqrt();
+    let outline = 1.0
+        + (angle * 3.0 + asteroid.seed).sin() * 0.16
+        + (angle * 5.0 + asteroid.seed * 0.7).cos() * 0.11
+        + (angle * 7.0 + asteroid.seed * 1.4).sin() * 0.07;
+    let alpha = 1.0 - smoothstep(outline * 0.82, outline, distance);
+
+    if alpha <= 0.0 {
+        return color;
+    }
+
+    let highlight = (0.46 - du * 0.22 + dv * 0.18).clamp(0.0, 0.72);
+    let mut asteroid_color =
+        Color::new(0.225, 0.135, 0.430).lerp(Color::new(0.390, 0.255, 0.690), highlight);
+    let crater_a = 1.0
+        - smoothstep(
+            0.08,
+            0.24,
+            ((du + 0.22).powi(2) + (dv - 0.08).powi(2)).sqrt(),
+        );
+    let crater_b = 1.0
+        - smoothstep(
+            0.06,
+            0.18,
+            ((du - 0.26).powi(2) + (dv + 0.20).powi(2)).sqrt(),
+        );
+    let crater_c = 1.0
+        - smoothstep(
+            0.05,
+            0.16,
+            ((du + 0.02).powi(2) + (dv + 0.30).powi(2)).sqrt(),
+        );
+    let crater = (crater_a * 0.32 + crater_b * 0.22 + crater_c * 0.18).clamp(0.0, 0.42);
+    asteroid_color = asteroid_color.lerp(Color::new(0.110, 0.075, 0.250), crater);
+
+    color.lerp(asteroid_color, alpha * asteroid.opacity)
 }
 
 fn wrapped_uv_distance(u: f32, v: f32, center_u: f32, center_v: f32, u_scale: f32) -> f32 {
@@ -1400,12 +1566,13 @@ mod tests {
         BLUE_MOON_BIRD_COUNT, BLUE_MOON_PIG_COUNT, BLUE_MOON_PLANET_CENTER,
         BLUE_MOON_PLANET_RADIUS, COOKIE_LEVEL_PIG_COUNT, COOKIE_PLANET_CENTER,
         COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
-        LAUNCH_ASTEROID_CENTER, PlanetType, SPACE_SUN_DIRECTION, SPACE_SUN_U, SPACE_SUN_V,
-        SceneState, SpaceMaterials, add_radial_box, blue_moon_orbit_camera,
-        build_blue_moon_scene_with_metadata, build_cookie_world_scene_with_metadata,
-        build_galaxy_selector_scene, build_space_levels_scene_with_metadata,
-        cookie_world_orbit_camera, galaxy_selector_orbit_camera, galaxy_selector_worlds,
-        main_moon_frame, register_space_materials, space_levels_orbit_camera, space_skybox_color,
+        LAUNCH_ASTEROID_CENTER, PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V,
+        SPACE_SUN_DIRECTION, SPACE_SUN_U, SPACE_SUN_V, SceneState, SpaceMaterials, add_radial_box,
+        angry_birds_space_skybox, blue_moon_orbit_camera, build_blue_moon_scene_with_metadata,
+        build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
+        build_space_levels_scene_with_metadata, cookie_world_orbit_camera,
+        galaxy_selector_orbit_camera, galaxy_selector_worlds, main_moon_frame,
+        register_space_materials, space_levels_orbit_camera, space_skybox_color,
         space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
     use crate::{material::Material, math::Vec3, ray::Ray, scene::Scene};
@@ -1498,9 +1665,48 @@ mod tests {
         assert_ne!(bottom, middle);
         assert!(sun.r > 0.95);
         assert!(sun.g > 0.85);
-        assert!(sun.b > 0.55);
-        assert!(middle.b > bottom.b);
+        assert!(sun.b > 0.12);
+        assert!(sun.r > sun.b);
+        assert!(bottom.b > 0.18);
         assert!(bright_pixels >= 12);
+    }
+
+    #[test]
+    fn spatial_scenes_use_angry_birds_space_skybox() {
+        let selector = build_galaxy_selector_scene().unwrap();
+        let (blue, _) = build_blue_moon_scene_with_metadata().unwrap();
+        let (cookie, _) = build_cookie_world_scene_with_metadata().unwrap();
+        let (combined, _) = build_space_levels_scene_with_metadata().unwrap();
+        let reference = angry_birds_space_skybox().unwrap();
+
+        assert_eq!(reference.texture().width(), super::SPACE_SKYBOX_WIDTH);
+        assert_eq!(reference.texture().height(), super::SPACE_SKYBOX_HEIGHT);
+        assert!(reference.intensity() > 1.0);
+
+        for scene in [&selector, &blue, &cookie, &combined] {
+            let skybox = scene.skybox().unwrap();
+
+            assert_eq!(skybox.texture().width(), super::SPACE_SKYBOX_WIDTH);
+            assert_eq!(skybox.texture().height(), super::SPACE_SKYBOX_HEIGHT);
+            assert_eq!(skybox.horizontal_rotation(), 0.0);
+        }
+    }
+
+    #[test]
+    fn angry_birds_space_skybox_has_cartoon_asteroids_and_cloud_layers() {
+        let sun = space_skybox_color(SPACE_SUN_U, SPACE_SUN_V);
+        let asteroid = space_skybox_color(SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V);
+        let lower_cloud = space_skybox_color(0.50, 0.090);
+
+        assert!(sun.r > 0.95);
+        assert!(sun.g > 0.70);
+        assert!(sun.b < sun.r);
+        assert!(asteroid.b > 0.36);
+        assert!(asteroid.r > asteroid.g);
+        assert!(asteroid.b > asteroid.g * 2.0);
+        assert!(lower_cloud.b > 0.20);
+        assert!(lower_cloud.g > 0.08);
+        assert!(lower_cloud.r < 0.08);
     }
 
     #[test]
