@@ -1,8 +1,9 @@
-use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
+use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
 use std::time::{Duration, Instant};
 
 use crate::{
-    camera::{CameraInput, OrbitCamera},
+    camera::{Camera, CameraInput, OrbitCamera},
+    color::Color,
     framebuffer::Framebuffer,
     math::Vec3,
     ray::Ray,
@@ -16,6 +17,9 @@ const HEIGHT: usize = 600;
 const INTERACTIVE_SCALE: f32 = 0.5;
 const FULL_QUALITY_DELAY: Duration = Duration::from_millis(180);
 const PRINT_RENDER_TIMES: bool = true;
+const LEFT_CLICK_DRAG_THRESHOLD: f32 = 5.0;
+const TEXT_SCALE: usize = 2;
+const DIGIT_SCALE: usize = 10;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
@@ -31,18 +35,23 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         WIDTH,
         HEIGHT,
         WindowOptions {
+            borderless: true,
+            title: false,
             resize: false,
+            scale: Scale::FitScreen,
+            scale_mode: ScaleMode::AspectRatioStretch,
             ..WindowOptions::default()
         },
     )?;
 
+    window.set_background_color(0, 0, 0);
     window.set_target_fps(60);
     print_controls();
     print_rayon_threads();
     let mut camera = orbit_camera.to_camera();
     let mut render_state = InteractiveRenderState::new();
     let mut last_frame = Instant::now();
-    let mut left_mouse_was_down = false;
+    let mut mouse_state = MouseInteractionState::default();
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
         let now = Instant::now();
@@ -51,39 +60,41 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
         if scene_state != SceneState::Galaxy && window.is_key_pressed(Key::Backspace, KeyRepeat::No)
         {
-            scene_state = SceneState::Galaxy;
-            scene = space::build_galaxy_selector_scene()?;
-            orbit_camera = space::galaxy_selector_orbit_camera(aspect_ratio);
-            camera = orbit_camera.to_camera();
-            render_state.mark_scene_changed();
-            println!("Regresando al selector de mundos");
+            return_to_selector(
+                aspect_ratio,
+                &mut scene_state,
+                &mut scene,
+                &mut orbit_camera,
+                &mut camera,
+                &mut render_state,
+            )?;
         }
 
-        if orbit_camera.update(read_camera_input(&window), delta_seconds) {
+        let mouse_orbit_delta = mouse_state.update_right_drag(&window);
+        if orbit_camera.update(read_camera_input(&window, mouse_orbit_delta), delta_seconds) {
             camera = orbit_camera.to_camera();
             render_state.mark_camera_changed(now);
         }
 
-        let left_mouse_down = window.get_mouse_down(MouseButton::Left);
         if scene_state == SceneState::Galaxy
-            && left_mouse_down
-            && !left_mouse_was_down
-            && let Some((mouse_x, mouse_y)) = window.get_mouse_pos(MouseMode::Discard)
+            && !window.get_mouse_down(MouseButton::Right)
+            && let Some((mouse_x, mouse_y)) = mouse_state.update_left_click(&window)
             && let Some((pixel_x, pixel_y)) =
                 mouse_to_framebuffer_pixel(mouse_x, mouse_y, WIDTH, HEIGHT, WIDTH, HEIGHT)
         {
             let ray = camera.ray_for_pixel(pixel_x, pixel_y, WIDTH, HEIGHT);
-
             if let Some(planet) = pick_selector_world(&ray, &space::galaxy_selector_worlds()) {
-                scene_state = SceneState::Planet(planet);
-                scene = build_planet_scene(planet)?;
-                orbit_camera = planet_orbit_camera(planet, aspect_ratio);
-                camera = orbit_camera.to_camera();
-                render_state.mark_scene_changed();
-                println!("Mundo seleccionado: {}", planet_label(planet));
+                select_planet(
+                    planet,
+                    aspect_ratio,
+                    &mut scene_state,
+                    &mut scene,
+                    &mut orbit_camera,
+                    &mut camera,
+                    &mut render_state,
+                )?;
             }
         }
-        left_mouse_was_down = left_mouse_down;
 
         if let Some(quality) = render_state.next_render(now, FULL_QUALITY_DELAY) {
             let started = Instant::now();
@@ -108,6 +119,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             render_state.render_completed(quality);
+            draw_ui(&mut framebuffer, &camera, scene_state);
         }
 
         window.update_with_buffer(framebuffer.pixels(), WIDTH, HEIGHT)?;
@@ -116,7 +128,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn read_camera_input(window: &Window) -> CameraInput {
+fn read_camera_input(window: &Window, mouse_orbit_delta: (f32, f32)) -> CameraInput {
     CameraInput {
         rotate_left: window.is_key_down(Key::A),
         rotate_right: window.is_key_down(Key::D),
@@ -129,12 +141,15 @@ fn read_camera_input(window: &Window) -> CameraInput {
             .get_scroll_wheel()
             .map(|(_, scroll_y)| scroll_y)
             .unwrap_or(0.0),
+        mouse_delta_x: mouse_orbit_delta.0,
+        mouse_delta_y: mouse_orbit_delta.1,
     }
 }
 
 fn print_controls() {
     println!("Controles:");
     println!("  Click izquierdo: seleccionar mundo en el selector");
+    println!("  Click derecho + mover mouse: rotar");
     println!("  W/S: inclinación");
     println!("  A/D: rotación");
     println!("  Q/E: zoom");
@@ -259,6 +274,7 @@ fn build_planet_scene(planet: PlanetType) -> Result<Scene, space::SpaceBuildErro
     match planet {
         PlanetType::BlueMoon => space::build_blue_moon_scene(),
         PlanetType::CookieWorld => space::build_cookie_world_scene(),
+        PlanetType::AsteroidBelt => space::build_level_three_scene(),
     }
 }
 
@@ -266,6 +282,7 @@ fn planet_orbit_camera(planet: PlanetType, aspect_ratio: f32) -> OrbitCamera {
     match planet {
         PlanetType::BlueMoon => space::blue_moon_orbit_camera(aspect_ratio),
         PlanetType::CookieWorld => space::cookie_world_orbit_camera(aspect_ratio),
+        PlanetType::AsteroidBelt => space::level_three_orbit_camera(aspect_ratio),
     }
 }
 
@@ -273,7 +290,49 @@ fn planet_label(planet: PlanetType) -> &'static str {
     match planet {
         PlanetType::BlueMoon => "Luna Azul",
         PlanetType::CookieWorld => "Planeta galleta",
+        PlanetType::AsteroidBelt => "Cinturon de asteroides",
     }
+}
+
+fn select_planet(
+    planet: PlanetType,
+    aspect_ratio: f32,
+    scene_state: &mut SceneState,
+    scene: &mut Scene,
+    orbit_camera: &mut OrbitCamera,
+    camera: &mut Camera,
+    render_state: &mut InteractiveRenderState,
+) -> Result<(), space::SpaceBuildError> {
+    *scene_state = SceneState::Planet(planet);
+    *scene = build_planet_scene(planet)?;
+    *orbit_camera = planet_orbit_camera(planet, aspect_ratio);
+    *camera = orbit_camera.to_camera();
+    render_state.mark_scene_changed();
+    println!("Mundo seleccionado: {}", planet_label(planet));
+
+    Ok(())
+}
+
+fn return_to_selector(
+    aspect_ratio: f32,
+    scene_state: &mut SceneState,
+    scene: &mut Scene,
+    orbit_camera: &mut OrbitCamera,
+    camera: &mut Camera,
+    render_state: &mut InteractiveRenderState,
+) -> Result<bool, space::SpaceBuildError> {
+    if *scene_state == SceneState::Galaxy {
+        return Ok(false);
+    }
+
+    *scene_state = SceneState::Galaxy;
+    *scene = space::build_galaxy_selector_scene()?;
+    *orbit_camera = space::galaxy_selector_orbit_camera(aspect_ratio);
+    *camera = orbit_camera.to_camera();
+    render_state.mark_scene_changed();
+    println!("Regresando al selector de mundos");
+
+    Ok(true)
 }
 
 fn mouse_to_framebuffer_pixel(
@@ -364,17 +423,424 @@ fn is_finite_vec3(vector: Vec3) -> bool {
     vector.x.is_finite() && vector.y.is_finite() && vector.z.is_finite()
 }
 
+#[derive(Debug, Default)]
+struct MouseInteractionState {
+    right_previous: Option<(f32, f32)>,
+    left_start: Option<(f32, f32)>,
+    left_dragged: bool,
+}
+
+impl MouseInteractionState {
+    fn update_right_drag(&mut self, window: &Window) -> (f32, f32) {
+        if !window.get_mouse_down(MouseButton::Right) {
+            self.right_previous = None;
+            return (0.0, 0.0);
+        }
+
+        let Some(current) = window.get_mouse_pos(MouseMode::Clamp) else {
+            self.right_previous = None;
+            return (0.0, 0.0);
+        };
+        let delta = self
+            .right_previous
+            .map(|previous| (current.0 - previous.0, current.1 - previous.1))
+            .unwrap_or((0.0, 0.0));
+
+        self.right_previous = Some(current);
+        delta
+    }
+
+    fn update_left_click(&mut self, window: &Window) -> Option<(f32, f32)> {
+        let left_down = window.get_mouse_down(MouseButton::Left);
+
+        if left_down {
+            if let Some(current) = window.get_mouse_pos(MouseMode::Discard) {
+                if let Some(start) = self.left_start {
+                    let delta_x = current.0 - start.0;
+                    let delta_y = current.1 - start.1;
+                    self.left_dragged |=
+                        delta_x * delta_x + delta_y * delta_y > LEFT_CLICK_DRAG_THRESHOLD.powi(2);
+                } else {
+                    self.left_start = Some(current);
+                    self.left_dragged = false;
+                }
+            }
+
+            return None;
+        }
+
+        let released = self
+            .left_start
+            .take()
+            .and_then(|_| window.get_mouse_pos(MouseMode::Discard));
+        let was_dragged = self.left_dragged;
+        self.left_dragged = false;
+
+        released.filter(|_| !was_dragged)
+    }
+}
+
+fn draw_ui(framebuffer: &mut Framebuffer, camera: &Camera, scene_state: SceneState) {
+    if scene_state == SceneState::Galaxy {
+        draw_selector_numbers(framebuffer, camera);
+    }
+
+    draw_controls_overlay(framebuffer);
+}
+
+fn draw_selector_numbers(framebuffer: &mut Framebuffer, camera: &Camera) {
+    for world in space::galaxy_selector_worlds() {
+        if let Some((x, y)) = project_world_to_pixel(
+            *camera,
+            world.center,
+            framebuffer.width(),
+            framebuffer.height(),
+        ) {
+            let digit = char::from_digit(world.level_number as u32, 10).unwrap_or('?');
+            draw_text_centered(
+                framebuffer,
+                x as isize + 3,
+                y as isize + 3,
+                &digit.to_string(),
+                DIGIT_SCALE,
+                Color::BLACK,
+            );
+            draw_text_centered(
+                framebuffer,
+                x as isize,
+                y as isize,
+                &digit.to_string(),
+                DIGIT_SCALE,
+                Color::new(1.0, 0.92, 0.36),
+            );
+        }
+    }
+}
+
+fn draw_controls_overlay(framebuffer: &mut Framebuffer) {
+    let lines = [
+        "CLICK IZQUIERDO: SELECCIONAR",
+        "CLICK DERECHO + MOVER: ROTAR",
+        "RUEDA: ZOOM",
+        "BACKSPACE: REGRESAR",
+        "ESC: SALIR",
+    ];
+    let line_height = (GLYPH_HEIGHT + 2) * TEXT_SCALE;
+    let panel_width = lines
+        .iter()
+        .map(|line| text_width(line, TEXT_SCALE))
+        .max()
+        .unwrap_or(0)
+        + 18;
+    let panel_height = lines.len() * line_height + 12;
+    let x = framebuffer.width().saturating_sub(panel_width + 12);
+    let y = framebuffer.height().saturating_sub(panel_height + 12);
+
+    draw_rect(
+        framebuffer,
+        x,
+        y,
+        panel_width,
+        panel_height,
+        Color::new(0.0, 0.0, 0.0),
+    );
+
+    for (index, line) in lines.iter().enumerate() {
+        draw_text(
+            framebuffer,
+            x + 9,
+            y + 7 + index * line_height,
+            line,
+            TEXT_SCALE,
+            Color::new(0.86, 0.93, 1.0),
+        );
+    }
+}
+
+fn project_world_to_pixel(
+    camera: Camera,
+    point: Vec3,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
+) -> Option<(usize, usize)> {
+    if framebuffer_width == 0 || framebuffer_height == 0 {
+        return None;
+    }
+
+    let basis = camera.basis();
+    let camera_to_point = point - camera.position;
+    let depth = camera_to_point.dot(basis.forward);
+
+    if !depth.is_finite() || depth <= 0.001 {
+        return None;
+    }
+
+    let half_height = (camera.vertical_fov_degrees.to_radians() * 0.5).tan();
+    let half_width = half_height * camera.aspect_ratio;
+    let ndc_x = camera_to_point.dot(basis.right) / (depth * half_width);
+    let ndc_y = camera_to_point.dot(basis.up) / (depth * half_height);
+
+    if !ndc_x.is_finite()
+        || !ndc_y.is_finite()
+        || !(-1.0..=1.0).contains(&ndc_x)
+        || !(-1.0..=1.0).contains(&ndc_y)
+    {
+        return None;
+    }
+
+    let pixel_x = ((ndc_x + 1.0) * 0.5 * framebuffer_width as f32).floor() as usize;
+    let pixel_y = ((1.0 - ndc_y) * 0.5 * framebuffer_height as f32).floor() as usize;
+
+    Some((
+        pixel_x.min(framebuffer_width - 1),
+        pixel_y.min(framebuffer_height - 1),
+    ))
+}
+
+const GLYPH_WIDTH: usize = 5;
+const GLYPH_HEIGHT: usize = 7;
+
+fn text_width(text: &str, scale: usize) -> usize {
+    text.chars().count() * (GLYPH_WIDTH + 1) * scale
+}
+
+fn draw_text_centered(
+    framebuffer: &mut Framebuffer,
+    center_x: isize,
+    center_y: isize,
+    text: &str,
+    scale: usize,
+    color: Color,
+) {
+    let width = text_width(text, scale) as isize;
+    let height = (GLYPH_HEIGHT * scale) as isize;
+    let x = center_x - width / 2;
+    let y = center_y - height / 2;
+
+    draw_text_at(framebuffer, x, y, text, scale, color);
+}
+
+fn draw_text(
+    framebuffer: &mut Framebuffer,
+    x: usize,
+    y: usize,
+    text: &str,
+    scale: usize,
+    color: Color,
+) {
+    draw_text_at(framebuffer, x as isize, y as isize, text, scale, color);
+}
+
+fn draw_text_at(
+    framebuffer: &mut Framebuffer,
+    x: isize,
+    y: isize,
+    text: &str,
+    scale: usize,
+    color: Color,
+) {
+    let mut cursor_x = x;
+
+    for character in text.chars() {
+        draw_glyph(framebuffer, cursor_x, y, character, scale, color);
+        cursor_x += ((GLYPH_WIDTH + 1) * scale) as isize;
+    }
+}
+
+fn draw_glyph(
+    framebuffer: &mut Framebuffer,
+    x: isize,
+    y: isize,
+    character: char,
+    scale: usize,
+    color: Color,
+) {
+    let glyph = glyph_rows(character);
+
+    for (row, bits) in glyph.iter().enumerate() {
+        for column in 0..GLYPH_WIDTH {
+            if bits & (1 << (GLYPH_WIDTH - 1 - column)) == 0 {
+                continue;
+            }
+
+            for dy in 0..scale {
+                for dx in 0..scale {
+                    set_pixel_i(
+                        framebuffer,
+                        x + (column * scale + dx) as isize,
+                        y + (row * scale + dy) as isize,
+                        color,
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn draw_rect(
+    framebuffer: &mut Framebuffer,
+    x: usize,
+    y: usize,
+    width: usize,
+    height: usize,
+    color: Color,
+) {
+    let max_y = (y + height).min(framebuffer.height());
+    let max_x = (x + width).min(framebuffer.width());
+
+    for py in y..max_y {
+        for px in x..max_x {
+            framebuffer.set_pixel(px, py, color);
+        }
+    }
+}
+
+fn set_pixel_i(framebuffer: &mut Framebuffer, x: isize, y: isize, color: Color) {
+    if x < 0 || y < 0 {
+        return;
+    }
+
+    framebuffer.set_pixel(x as usize, y as usize, color);
+}
+
+fn glyph_rows(character: char) -> [u8; GLYPH_HEIGHT] {
+    match character.to_ascii_uppercase() {
+        'A' => [
+            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ],
+        'B' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
+        ],
+        'C' => [
+            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
+        ],
+        'D' => [
+            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
+        ],
+        'E' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
+        ],
+        'F' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'G' => [
+            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
+        ],
+        'H' => [
+            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
+        ],
+        'I' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
+        ],
+        'J' => [
+            0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100,
+        ],
+        'K' => [
+            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
+        ],
+        'L' => [
+            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
+        ],
+        'M' => [
+            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
+        ],
+        'N' => [
+            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
+        ],
+        'O' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'P' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
+        ],
+        'Q' => [
+            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
+        ],
+        'R' => [
+            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
+        ],
+        'S' => [
+            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        'T' => [
+            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'U' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+        ],
+        'V' => [
+            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
+        ],
+        'W' => [
+            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
+        ],
+        'X' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
+        ],
+        'Y' => [
+            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
+        ],
+        'Z' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
+        ],
+        '0' => [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        '1' => [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        '2' => [
+            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
+        ],
+        '3' => [
+            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
+        ],
+        '4' => [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        '5' => [
+            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
+        ],
+        '6' => [
+            0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        '7' => [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        '8' => [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        '9' => [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110,
+        ],
+        ':' => [
+            0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b00000,
+        ],
+        '+' => [
+            0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000,
+        ],
+        '-' => [
+            0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
+        ],
+        ' ' => [0; GLYPH_HEIGHT],
+        _ => [
+            0b11111, 0b10001, 0b00010, 0b00100, 0b00100, 0b00000, 0b00100,
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, RenderQuality,
-        interactive_dimensions, mouse_to_framebuffer_pixel, pick_selector_world,
+        build_planet_scene, interactive_dimensions, mouse_to_framebuffer_pixel,
+        pick_selector_world, return_to_selector,
     };
     use crate::{
         camera::{Camera, CameraInput, OrbitCamera},
         math::Vec3,
         ray::Ray,
-        space::{PlanetType, SelectorWorld, galaxy_selector_worlds},
+        space::{self, PlanetType, SceneState, SelectorWorld, galaxy_selector_worlds},
     };
     use std::time::{Duration, Instant};
 
@@ -707,6 +1173,24 @@ mod tests {
     }
 
     #[test]
+    fn ray_picking_selects_level_three_when_ray_points_to_third_selector() {
+        let worlds = galaxy_selector_worlds();
+        let level_three = worlds
+            .iter()
+            .find(|world| world.planet == PlanetType::AsteroidBelt)
+            .unwrap();
+        let ray = Ray::new(
+            Vec3::new(level_three.center.x, level_three.center.y, 8.0),
+            level_three.center - Vec3::new(level_three.center.x, level_three.center.y, 8.0),
+        );
+
+        assert_eq!(
+            pick_selector_world(&ray, &worlds),
+            Some(PlanetType::AsteroidBelt)
+        );
+    }
+
+    #[test]
     fn ray_picking_returns_none_when_ray_misses_selector_worlds() {
         let ray = Ray::new(Vec3::new(0.0, 5.0, 8.0), Vec3::new(0.0, 1.0, 0.0));
 
@@ -720,11 +1204,15 @@ mod tests {
                 planet: PlanetType::CookieWorld,
                 center: Vec3::new(0.0, 0.0, -4.0),
                 radius: 1.0,
+                level_number: 2,
+                locked: true,
             },
             SelectorWorld {
                 planet: PlanetType::BlueMoon,
                 center: Vec3::new(0.0, 0.0, -2.0),
                 radius: 1.0,
+                level_number: 1,
+                locked: true,
             },
         ];
         let ray = Ray::new(Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0));
@@ -743,6 +1231,62 @@ mod tests {
 
         assert!(preview_pixels <= full_pixels / 4);
         assert_eq!(preview_pixels, 120_000);
+    }
+
+    #[test]
+    fn third_planet_builds_placeholder_scene() {
+        let scene = build_planet_scene(PlanetType::AsteroidBelt).unwrap();
+
+        assert!(scene.object_count() >= 7);
+        assert!(scene.skybox().is_some());
+        assert!(scene.lights().len() >= 5);
+    }
+
+    #[test]
+    fn return_to_selector_rebuilds_selector_from_planet_state() {
+        let aspect_ratio = 4.0 / 3.0;
+        let mut scene_state = SceneState::Planet(PlanetType::AsteroidBelt);
+        let mut scene = space::build_level_three_scene().unwrap();
+        let mut orbit_camera = space::level_three_orbit_camera(aspect_ratio);
+        let mut camera = orbit_camera.to_camera();
+        let mut render_state = clean_state();
+
+        let changed = return_to_selector(
+            aspect_ratio,
+            &mut scene_state,
+            &mut scene,
+            &mut orbit_camera,
+            &mut camera,
+            &mut render_state,
+        )
+        .unwrap();
+
+        assert!(changed);
+        assert_eq!(scene_state, SceneState::Galaxy);
+        assert_eq!(scene.object_count(), 6);
+        assert_eq!(
+            orbit_camera,
+            space::galaxy_selector_orbit_camera(aspect_ratio)
+        );
+        assert!(render_state.scene_dirty);
+    }
+
+    #[test]
+    fn mouse_drag_delta_changes_orbit_without_keyboard_input() {
+        let mut orbit = default_orbit();
+        let before = orbit;
+
+        assert!(orbit.update(
+            CameraInput {
+                mouse_delta_x: 12.0,
+                mouse_delta_y: -6.0,
+                ..CameraInput::default()
+            },
+            0.016,
+        ));
+
+        assert_ne!(orbit.yaw, before.yaw);
+        assert_ne!(orbit.pitch, before.pitch);
     }
 
     #[test]

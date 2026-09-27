@@ -3,6 +3,7 @@ use crate::{math::Vec3, ray::Ray};
 const ORBIT_ROTATION_SPEED: f32 = 1.6;
 const ORBIT_ZOOM_SPEED: f32 = 5.0;
 const MOUSE_SCROLL_ZOOM_STEP: f32 = 3.0;
+const MOUSE_DRAG_ROTATION_STEP: f32 = 0.006;
 const MAX_ORBIT_DELTA_SECONDS: f32 = 0.1;
 const MIN_ORBIT_PITCH: f32 = -std::f32::consts::FRAC_PI_2 + 0.05;
 const MAX_ORBIT_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.05;
@@ -43,6 +44,8 @@ pub struct CameraInput {
     pub zoom_out: bool,
     pub reset: bool,
     pub scroll_zoom: f32,
+    pub mouse_delta_x: f32,
+    pub mouse_delta_y: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -206,8 +209,24 @@ impl OrbitCamera {
         } else {
             0.0
         };
+        let mouse_delta_x = if input.mouse_delta_x.is_finite() {
+            input.mouse_delta_x
+        } else {
+            0.0
+        };
+        let mouse_delta_y = if input.mouse_delta_y.is_finite() {
+            input.mouse_delta_y
+        } else {
+            0.0
+        };
 
-        if yaw_direction == 0 && pitch_direction == 0 && zoom_direction == 0 && scroll_zoom == 0.0 {
+        if yaw_direction == 0
+            && pitch_direction == 0
+            && zoom_direction == 0
+            && scroll_zoom == 0.0
+            && mouse_delta_x == 0.0
+            && mouse_delta_y == 0.0
+        {
             return false;
         }
 
@@ -220,8 +239,15 @@ impl OrbitCamera {
         let distance_delta =
             zoom_direction as f32 * zoom_step - scroll_zoom * MOUSE_SCROLL_ZOOM_STEP;
 
-        self.yaw = normalize_yaw(self.yaw + yaw_direction as f32 * rotation_step);
-        self.pitch = clamp_pitch(self.pitch + pitch_direction as f32 * rotation_step);
+        self.yaw = normalize_yaw(
+            self.yaw
+                + yaw_direction as f32 * rotation_step
+                + mouse_delta_x * MOUSE_DRAG_ROTATION_STEP,
+        );
+        self.pitch = clamp_pitch(
+            self.pitch + pitch_direction as f32 * rotation_step
+                - mouse_delta_y * MOUSE_DRAG_ROTATION_STEP,
+        );
         self.distance = clamp_distance(self.distance + distance_delta);
 
         (self.yaw - previous_yaw).abs() > 0.0
