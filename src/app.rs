@@ -1,9 +1,8 @@
-use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Scale, ScaleMode, Window, WindowOptions};
+use raylib::prelude::*;
 use std::time::{Duration, Instant};
 
 use crate::{
     camera::{Camera, CameraInput, OrbitCamera},
-    color::Color,
     framebuffer::Framebuffer,
     math::Vec3,
     ray::Ray,
@@ -18,34 +17,32 @@ const INTERACTIVE_SCALE: f32 = 0.5;
 const FULL_QUALITY_DELAY: Duration = Duration::from_millis(180);
 const PRINT_RENDER_TIMES: bool = true;
 const LEFT_CLICK_DRAG_THRESHOLD: f32 = 5.0;
-const TEXT_SCALE: usize = 2;
-const DIGIT_SCALE: usize = 10;
+const LEVEL_NUMBER_FONT_SIZE: i32 = 92;
+const CONTROLS_FONT_SIZE: i32 = 20;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
     let (interactive_width, interactive_height) =
         interactive_dimensions(WIDTH, HEIGHT, INTERACTIVE_SCALE);
     let mut interactive_framebuffer = Framebuffer::new(interactive_width, interactive_height);
+    let mut texture_pixels = vec![0; WIDTH * HEIGHT * 4];
     let aspect_ratio = WIDTH as f32 / HEIGHT as f32;
     let mut scene_state = SceneState::Galaxy;
     let mut orbit_camera = space::galaxy_selector_orbit_camera(aspect_ratio);
     let mut scene = space::build_galaxy_selector_scene()?;
-    let mut window = Window::new(
-        space::SPACE_WORLDS_WINDOW_TITLE,
-        WIDTH,
-        HEIGHT,
-        WindowOptions {
-            borderless: true,
-            title: false,
-            resize: false,
-            scale: Scale::FitScreen,
-            scale_mode: ScaleMode::AspectRatioStretch,
-            ..WindowOptions::default()
-        },
-    )?;
 
-    window.set_background_color(0, 0, 0);
-    window.set_target_fps(60);
+    let (mut rl, thread) = raylib::init()
+        .size(WIDTH as i32, HEIGHT as i32)
+        .title(space::SPACE_WORLDS_WINDOW_TITLE)
+        .build();
+    enter_fullscreen(&mut rl);
+    rl.set_exit_key(None);
+    rl.set_target_fps(60);
+
+    let render_image = Image::gen_image_color(WIDTH as i32, HEIGHT as i32, Color::BLACK);
+    let mut render_texture = rl.load_texture_from_image(&thread, &render_image)?;
+    render_texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
+
     print_controls();
     print_rayon_threads();
     let mut camera = orbit_camera.to_camera();
@@ -53,13 +50,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut last_frame = Instant::now();
     let mut mouse_state = MouseInteractionState::default();
 
-    while window.is_open() && !window.is_key_down(Key::Escape) {
+    while !rl.window_should_close() && !rl.is_key_down(KeyboardKey::KEY_ESCAPE) {
         let now = Instant::now();
         let delta_seconds = now.duration_since(last_frame).as_secs_f32();
         last_frame = now;
 
-        if scene_state != SceneState::Galaxy && window.is_key_pressed(Key::Backspace, KeyRepeat::No)
-        {
+        if scene_state != SceneState::Galaxy && rl.is_key_pressed(KeyboardKey::KEY_BACKSPACE) {
             return_to_selector(
                 aspect_ratio,
                 &mut scene_state,
@@ -70,17 +66,24 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
 
-        let mouse_orbit_delta = mouse_state.update_right_drag(&window);
-        if orbit_camera.update(read_camera_input(&window, mouse_orbit_delta), delta_seconds) {
+        let mouse_orbit_delta = mouse_orbit_delta(&rl);
+        if orbit_camera.update(read_camera_input(&rl, mouse_orbit_delta), delta_seconds) {
             camera = orbit_camera.to_camera();
             render_state.mark_camera_changed(now);
         }
 
+        let viewport =
+            render_viewport(rl.get_screen_width(), rl.get_screen_height(), WIDTH, HEIGHT);
         if scene_state == SceneState::Galaxy
-            && !window.get_mouse_down(MouseButton::Right)
-            && let Some((mouse_x, mouse_y)) = mouse_state.update_left_click(&window)
-            && let Some((pixel_x, pixel_y)) =
-                mouse_to_framebuffer_pixel(mouse_x, mouse_y, WIDTH, HEIGHT, WIDTH, HEIGHT)
+            && !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT)
+            && let Some(mouse_position) = mouse_state.update_left_click(&rl)
+            && let Some((pixel_x, pixel_y)) = mouse_position_to_framebuffer_pixel(
+                mouse_position.x,
+                mouse_position.y,
+                viewport,
+                WIDTH,
+                HEIGHT,
+            )
         {
             let ray = camera.ray_for_pixel(pixel_x, pixel_y, WIDTH, HEIGHT);
             if let Some(planet) = pick_selector_world(&ray, &space::galaxy_selector_worlds()) {
@@ -119,31 +122,67 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             render_state.render_completed(quality);
-            draw_ui(&mut framebuffer, &camera, scene_state);
+            write_framebuffer_rgba(&framebuffer, &mut texture_pixels);
+            render_texture.update_texture(&texture_pixels)?;
         }
 
-        window.update_with_buffer(framebuffer.pixels(), WIDTH, HEIGHT)?;
+        let viewport =
+            render_viewport(rl.get_screen_width(), rl.get_screen_height(), WIDTH, HEIGHT);
+        let controls_width = controls_overlay_width(&rl);
+        let mut drawing = rl.begin_drawing(&thread);
+        drawing.clear_background(Color::BLACK);
+        draw_framebuffer_texture(&mut drawing, &render_texture, viewport);
+        draw_raylib_ui(&mut drawing, &camera, scene_state, viewport, controls_width);
     }
 
     Ok(())
 }
 
-fn read_camera_input(window: &Window, mouse_orbit_delta: (f32, f32)) -> CameraInput {
+fn enter_fullscreen(rl: &mut RaylibHandle) {
+    let monitor = raylib::core::window::get_current_monitor();
+    let screen_width = raylib::core::window::get_monitor_width(monitor);
+    let screen_height = raylib::core::window::get_monitor_height(monitor);
+    let monitor_position = raylib::core::window::get_monitor_position(monitor);
+
+    if screen_width > 0 && screen_height > 0 {
+        rl.set_window_monitor(monitor);
+        rl.set_window_size(screen_width, screen_height);
+    }
+    if !rl.is_window_fullscreen() {
+        rl.toggle_fullscreen();
+    }
+    if screen_width > 0 && screen_height > 0 && !rl.is_window_fullscreen() {
+        rl.set_window_position(
+            monitor_position.x.round() as i32,
+            monitor_position.y.round() as i32,
+        );
+        rl.set_window_size(screen_width, screen_height);
+        rl.toggle_borderless_windowed();
+    }
+}
+
+fn read_camera_input(rl: &RaylibHandle, mouse_orbit_delta: (f32, f32)) -> CameraInput {
     CameraInput {
-        rotate_left: window.is_key_down(Key::A),
-        rotate_right: window.is_key_down(Key::D),
-        rotate_up: window.is_key_down(Key::W),
-        rotate_down: window.is_key_down(Key::S),
-        zoom_in: window.is_key_down(Key::Q),
-        zoom_out: window.is_key_down(Key::E),
-        reset: window.is_key_pressed(Key::R, KeyRepeat::No),
-        scroll_zoom: window
-            .get_scroll_wheel()
-            .map(|(_, scroll_y)| scroll_y)
-            .unwrap_or(0.0),
+        rotate_left: rl.is_key_down(KeyboardKey::KEY_A),
+        rotate_right: rl.is_key_down(KeyboardKey::KEY_D),
+        rotate_up: rl.is_key_down(KeyboardKey::KEY_W),
+        rotate_down: rl.is_key_down(KeyboardKey::KEY_S),
+        zoom_in: rl.is_key_down(KeyboardKey::KEY_Q),
+        zoom_out: rl.is_key_down(KeyboardKey::KEY_E),
+        reset: rl.is_key_pressed(KeyboardKey::KEY_R),
+        scroll_zoom: rl.get_mouse_wheel_move(),
         mouse_delta_x: mouse_orbit_delta.0,
         mouse_delta_y: mouse_orbit_delta.1,
     }
+}
+
+fn mouse_orbit_delta(rl: &RaylibHandle) -> (f32, f32) {
+    if !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT) {
+        return (0.0, 0.0);
+    }
+
+    let delta = rl.get_mouse_delta();
+    (delta.x, delta.y)
 }
 
 fn print_controls() {
@@ -335,6 +374,37 @@ fn return_to_selector(
     Ok(true)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Viewport {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+fn render_viewport(
+    screen_width: i32,
+    screen_height: i32,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
+) -> Viewport {
+    let screen_width = screen_width.max(1) as f32;
+    let screen_height = screen_height.max(1) as f32;
+    let framebuffer_width = framebuffer_width.max(1) as f32;
+    let framebuffer_height = framebuffer_height.max(1) as f32;
+    let scale = (screen_width / framebuffer_width).min(screen_height / framebuffer_height);
+    let width = framebuffer_width * scale;
+    let height = framebuffer_height * scale;
+
+    Viewport {
+        x: (screen_width - width) * 0.5,
+        y: (screen_height - height) * 0.5,
+        width,
+        height,
+    }
+}
+
+#[cfg(test)]
 fn mouse_to_framebuffer_pixel(
     mouse_x: f32,
     mouse_y: f32,
@@ -343,22 +413,49 @@ fn mouse_to_framebuffer_pixel(
     framebuffer_width: usize,
     framebuffer_height: usize,
 ) -> Option<(usize, usize)> {
+    mouse_position_to_framebuffer_pixel(
+        mouse_x,
+        mouse_y,
+        Viewport {
+            x: 0.0,
+            y: 0.0,
+            width: window_width as f32,
+            height: window_height as f32,
+        },
+        framebuffer_width,
+        framebuffer_height,
+    )
+}
+
+fn mouse_position_to_framebuffer_pixel(
+    mouse_x: f32,
+    mouse_y: f32,
+    viewport: Viewport,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
+) -> Option<(usize, usize)> {
     if !mouse_x.is_finite()
         || !mouse_y.is_finite()
-        || window_width == 0
-        || window_height == 0
+        || !viewport.x.is_finite()
+        || !viewport.y.is_finite()
+        || !viewport.width.is_finite()
+        || !viewport.height.is_finite()
+        || viewport.width <= 0.0
+        || viewport.height <= 0.0
         || framebuffer_width == 0
         || framebuffer_height == 0
-        || mouse_x < 0.0
-        || mouse_y < 0.0
-        || mouse_x >= window_width as f32
-        || mouse_y >= window_height as f32
+        || mouse_x < viewport.x
+        || mouse_y < viewport.y
+        || mouse_x >= viewport.x + viewport.width
+        || mouse_y >= viewport.y + viewport.height
     {
         return None;
     }
 
-    let pixel_x = ((mouse_x / window_width as f32) * framebuffer_width as f32).floor() as usize;
-    let pixel_y = ((mouse_y / window_height as f32) * framebuffer_height as f32).floor() as usize;
+    let local_x = mouse_x - viewport.x;
+    let local_y = mouse_y - viewport.y;
+    let pixel_x = ((local_x / viewport.width) * framebuffer_width as f32).floor() as usize;
+    let pixel_y = ((local_y / viewport.height) * framebuffer_height as f32).floor() as usize;
 
     Some((
         pixel_x.min(framebuffer_width - 1),
@@ -425,136 +522,151 @@ fn is_finite_vec3(vector: Vec3) -> bool {
 
 #[derive(Debug, Default)]
 struct MouseInteractionState {
-    right_previous: Option<(f32, f32)>,
-    left_start: Option<(f32, f32)>,
+    left_start: Option<Vector2>,
     left_dragged: bool,
 }
 
 impl MouseInteractionState {
-    fn update_right_drag(&mut self, window: &Window) -> (f32, f32) {
-        if !window.get_mouse_down(MouseButton::Right) {
-            self.right_previous = None;
-            return (0.0, 0.0);
-        }
-
-        let Some(current) = window.get_mouse_pos(MouseMode::Clamp) else {
-            self.right_previous = None;
-            return (0.0, 0.0);
-        };
-        let delta = self
-            .right_previous
-            .map(|previous| (current.0 - previous.0, current.1 - previous.1))
-            .unwrap_or((0.0, 0.0));
-
-        self.right_previous = Some(current);
-        delta
-    }
-
-    fn update_left_click(&mut self, window: &Window) -> Option<(f32, f32)> {
-        let left_down = window.get_mouse_down(MouseButton::Left);
-
-        if left_down {
-            if let Some(current) = window.get_mouse_pos(MouseMode::Discard) {
-                if let Some(start) = self.left_start {
-                    let delta_x = current.0 - start.0;
-                    let delta_y = current.1 - start.1;
-                    self.left_dragged |=
-                        delta_x * delta_x + delta_y * delta_y > LEFT_CLICK_DRAG_THRESHOLD.powi(2);
-                } else {
-                    self.left_start = Some(current);
-                    self.left_dragged = false;
-                }
+    fn update_left_click(&mut self, rl: &RaylibHandle) -> Option<Vector2> {
+        if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+            let current = rl.get_mouse_position();
+            if let Some(start) = self.left_start {
+                let delta_x = current.x - start.x;
+                let delta_y = current.y - start.y;
+                self.left_dragged |=
+                    delta_x * delta_x + delta_y * delta_y > LEFT_CLICK_DRAG_THRESHOLD.powi(2);
+            } else {
+                self.left_start = Some(current);
+                self.left_dragged = false;
             }
 
             return None;
         }
 
-        let released = self
-            .left_start
-            .take()
-            .and_then(|_| window.get_mouse_pos(MouseMode::Discard));
+        if !rl.is_mouse_button_released(MouseButton::MOUSE_BUTTON_LEFT) {
+            return None;
+        }
+
         let was_dragged = self.left_dragged;
+        self.left_start = None;
         self.left_dragged = false;
 
-        released.filter(|_| !was_dragged)
+        (!was_dragged).then(|| rl.get_mouse_position())
     }
 }
 
-fn draw_ui(framebuffer: &mut Framebuffer, camera: &Camera, scene_state: SceneState) {
+fn write_framebuffer_rgba(framebuffer: &Framebuffer, output: &mut [u8]) {
+    for (pixel, rgba) in framebuffer.pixels().iter().zip(output.chunks_exact_mut(4)) {
+        rgba[0] = ((pixel >> 16) & 0xff) as u8;
+        rgba[1] = ((pixel >> 8) & 0xff) as u8;
+        rgba[2] = (pixel & 0xff) as u8;
+        rgba[3] = 0xff;
+    }
+}
+
+fn draw_framebuffer_texture(
+    drawing: &mut RaylibDrawHandle<'_>,
+    texture: &Texture2D,
+    viewport: Viewport,
+) {
+    drawing.draw_texture_pro(
+        texture,
+        Rectangle::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32),
+        Rectangle::new(viewport.x, viewport.y, viewport.width, viewport.height),
+        Vector2::new(0.0, 0.0),
+        0.0,
+        Color::WHITE,
+    );
+}
+
+fn draw_raylib_ui(
+    drawing: &mut RaylibDrawHandle<'_>,
+    camera: &Camera,
+    scene_state: SceneState,
+    viewport: Viewport,
+    controls_width: i32,
+) {
     if scene_state == SceneState::Galaxy {
-        draw_selector_numbers(framebuffer, camera);
+        draw_selector_numbers(drawing, camera, viewport);
     }
 
-    draw_controls_overlay(framebuffer);
+    draw_controls_overlay(drawing, controls_width);
 }
 
-fn draw_selector_numbers(framebuffer: &mut Framebuffer, camera: &Camera) {
+fn draw_selector_numbers(drawing: &mut RaylibDrawHandle<'_>, camera: &Camera, viewport: Viewport) {
     for world in space::galaxy_selector_worlds() {
-        if let Some((x, y)) = project_world_to_pixel(
-            *camera,
-            world.center,
-            framebuffer.width(),
-            framebuffer.height(),
-        ) {
-            let digit = char::from_digit(world.level_number as u32, 10).unwrap_or('?');
-            draw_text_centered(
-                framebuffer,
-                x as isize + 3,
-                y as isize + 3,
-                &digit.to_string(),
-                DIGIT_SCALE,
-                Color::BLACK,
+        if let Some((x, y)) = project_world_to_pixel(*camera, world.center, WIDTH, HEIGHT) {
+            let screen_x = viewport.x + (x as f32 / WIDTH as f32) * viewport.width;
+            let screen_y = viewport.y + (y as f32 / HEIGHT as f32) * viewport.height;
+            let text = world.level_number.to_string();
+            let width = text.len() as i32 * LEVEL_NUMBER_FONT_SIZE / 2;
+            let x = screen_x.round() as i32 - width / 2;
+            let y = screen_y.round() as i32 - LEVEL_NUMBER_FONT_SIZE / 2;
+
+            drawing.draw_text(
+                &text,
+                x + 4,
+                y + 4,
+                LEVEL_NUMBER_FONT_SIZE,
+                Color::new(0, 0, 0, 190),
             );
-            draw_text_centered(
-                framebuffer,
-                x as isize,
-                y as isize,
-                &digit.to_string(),
-                DIGIT_SCALE,
-                Color::new(1.0, 0.92, 0.36),
+            drawing.draw_text(
+                &text,
+                x,
+                y,
+                LEVEL_NUMBER_FONT_SIZE,
+                Color::new(255, 234, 92, 255),
             );
         }
     }
 }
 
-fn draw_controls_overlay(framebuffer: &mut Framebuffer) {
-    let lines = [
-        "CLICK IZQUIERDO: SELECCIONAR",
-        "CLICK DERECHO + MOVER: ROTAR",
-        "RUEDA: ZOOM",
-        "BACKSPACE: REGRESAR",
-        "ESC: SALIR",
-    ];
-    let line_height = (GLYPH_HEIGHT + 2) * TEXT_SCALE;
-    let panel_width = lines
+fn controls_overlay_width(rl: &RaylibHandle) -> i32 {
+    controls_lines()
         .iter()
-        .map(|line| text_width(line, TEXT_SCALE))
+        .map(|line| rl.measure_text(line, CONTROLS_FONT_SIZE))
         .max()
         .unwrap_or(0)
-        + 18;
-    let panel_height = lines.len() * line_height + 12;
-    let x = framebuffer.width().saturating_sub(panel_width + 12);
-    let y = framebuffer.height().saturating_sub(panel_height + 12);
+        + 28
+}
 
-    draw_rect(
-        framebuffer,
+fn draw_controls_overlay(drawing: &mut RaylibDrawHandle<'_>, panel_width: i32) {
+    let lines = controls_lines();
+    let line_height = CONTROLS_FONT_SIZE + 7;
+    let panel_height = lines.len() as i32 * line_height + 18;
+    let screen_width = drawing.get_screen_width();
+    let screen_height = drawing.get_screen_height();
+    let x = screen_width - panel_width - 18;
+    let y = screen_height - panel_height - 18;
+
+    drawing.draw_rectangle(x, y, panel_width, panel_height, Color::new(0, 0, 0, 170));
+    drawing.draw_rectangle_lines(
         x,
         y,
         panel_width,
         panel_height,
-        Color::new(0.0, 0.0, 0.0),
+        Color::new(120, 180, 255, 160),
     );
 
     for (index, line) in lines.iter().enumerate() {
-        draw_text(
-            framebuffer,
-            x + 9,
-            y + 7 + index * line_height,
+        drawing.draw_text(
             line,
-            TEXT_SCALE,
-            Color::new(0.86, 0.93, 1.0),
+            x + 14,
+            y + 10 + index as i32 * line_height,
+            CONTROLS_FONT_SIZE,
+            Color::new(220, 238, 255, 255),
         );
     }
+}
+
+fn controls_lines() -> [&'static str; 5] {
+    [
+        "Click izquierdo: seleccionar",
+        "Click derecho + mover: rotar",
+        "Rueda: zoom",
+        "Backspace: regresar",
+        "Esc: salir",
+    ]
 }
 
 fn project_world_to_pixel(
@@ -597,247 +709,18 @@ fn project_world_to_pixel(
     ))
 }
 
-const GLYPH_WIDTH: usize = 5;
-const GLYPH_HEIGHT: usize = 7;
-
-fn text_width(text: &str, scale: usize) -> usize {
-    text.chars().count() * (GLYPH_WIDTH + 1) * scale
-}
-
-fn draw_text_centered(
-    framebuffer: &mut Framebuffer,
-    center_x: isize,
-    center_y: isize,
-    text: &str,
-    scale: usize,
-    color: Color,
-) {
-    let width = text_width(text, scale) as isize;
-    let height = (GLYPH_HEIGHT * scale) as isize;
-    let x = center_x - width / 2;
-    let y = center_y - height / 2;
-
-    draw_text_at(framebuffer, x, y, text, scale, color);
-}
-
-fn draw_text(
-    framebuffer: &mut Framebuffer,
-    x: usize,
-    y: usize,
-    text: &str,
-    scale: usize,
-    color: Color,
-) {
-    draw_text_at(framebuffer, x as isize, y as isize, text, scale, color);
-}
-
-fn draw_text_at(
-    framebuffer: &mut Framebuffer,
-    x: isize,
-    y: isize,
-    text: &str,
-    scale: usize,
-    color: Color,
-) {
-    let mut cursor_x = x;
-
-    for character in text.chars() {
-        draw_glyph(framebuffer, cursor_x, y, character, scale, color);
-        cursor_x += ((GLYPH_WIDTH + 1) * scale) as isize;
-    }
-}
-
-fn draw_glyph(
-    framebuffer: &mut Framebuffer,
-    x: isize,
-    y: isize,
-    character: char,
-    scale: usize,
-    color: Color,
-) {
-    let glyph = glyph_rows(character);
-
-    for (row, bits) in glyph.iter().enumerate() {
-        for column in 0..GLYPH_WIDTH {
-            if bits & (1 << (GLYPH_WIDTH - 1 - column)) == 0 {
-                continue;
-            }
-
-            for dy in 0..scale {
-                for dx in 0..scale {
-                    set_pixel_i(
-                        framebuffer,
-                        x + (column * scale + dx) as isize,
-                        y + (row * scale + dy) as isize,
-                        color,
-                    );
-                }
-            }
-        }
-    }
-}
-
-fn draw_rect(
-    framebuffer: &mut Framebuffer,
-    x: usize,
-    y: usize,
-    width: usize,
-    height: usize,
-    color: Color,
-) {
-    let max_y = (y + height).min(framebuffer.height());
-    let max_x = (x + width).min(framebuffer.width());
-
-    for py in y..max_y {
-        for px in x..max_x {
-            framebuffer.set_pixel(px, py, color);
-        }
-    }
-}
-
-fn set_pixel_i(framebuffer: &mut Framebuffer, x: isize, y: isize, color: Color) {
-    if x < 0 || y < 0 {
-        return;
-    }
-
-    framebuffer.set_pixel(x as usize, y as usize, color);
-}
-
-fn glyph_rows(character: char) -> [u8; GLYPH_HEIGHT] {
-    match character.to_ascii_uppercase() {
-        'A' => [
-            0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'B' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10001, 0b10001, 0b11110,
-        ],
-        'C' => [
-            0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110,
-        ],
-        'D' => [
-            0b11110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b11110,
-        ],
-        'E' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
-        ],
-        'F' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'G' => [
-            0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01110,
-        ],
-        'H' => [
-            0b10001, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001,
-        ],
-        'I' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b11111,
-        ],
-        'J' => [
-            0b00111, 0b00010, 0b00010, 0b00010, 0b10010, 0b10010, 0b01100,
-        ],
-        'K' => [
-            0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001,
-        ],
-        'L' => [
-            0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
-        ],
-        'M' => [
-            0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001,
-        ],
-        'N' => [
-            0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
-        ],
-        'O' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'P' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10000, 0b10000, 0b10000,
-        ],
-        'Q' => [
-            0b01110, 0b10001, 0b10001, 0b10001, 0b10101, 0b10010, 0b01101,
-        ],
-        'R' => [
-            0b11110, 0b10001, 0b10001, 0b11110, 0b10100, 0b10010, 0b10001,
-        ],
-        'S' => [
-            0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        'T' => [
-            0b11111, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'U' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
-        ],
-        'V' => [
-            0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01010, 0b00100,
-        ],
-        'W' => [
-            0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b10101, 0b01010,
-        ],
-        'X' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001,
-        ],
-        'Y' => [
-            0b10001, 0b10001, 0b01010, 0b00100, 0b00100, 0b00100, 0b00100,
-        ],
-        'Z' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b10000, 0b11111,
-        ],
-        '0' => [
-            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
-        ],
-        '1' => [
-            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
-        ],
-        '2' => [
-            0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111,
-        ],
-        '3' => [
-            0b11110, 0b00001, 0b00001, 0b01110, 0b00001, 0b00001, 0b11110,
-        ],
-        '4' => [
-            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
-        ],
-        '5' => [
-            0b11111, 0b10000, 0b10000, 0b11110, 0b00001, 0b00001, 0b11110,
-        ],
-        '6' => [
-            0b01110, 0b10000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
-        ],
-        '7' => [
-            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
-        ],
-        '8' => [
-            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
-        ],
-        '9' => [
-            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00001, 0b01110,
-        ],
-        ':' => [
-            0b00000, 0b00100, 0b00100, 0b00000, 0b00100, 0b00100, 0b00000,
-        ],
-        '+' => [
-            0b00000, 0b00100, 0b00100, 0b11111, 0b00100, 0b00100, 0b00000,
-        ],
-        '-' => [
-            0b00000, 0b00000, 0b00000, 0b11111, 0b00000, 0b00000, 0b00000,
-        ],
-        ' ' => [0; GLYPH_HEIGHT],
-        _ => [
-            0b11111, 0b10001, 0b00010, 0b00100, 0b00100, 0b00000, 0b00100,
-        ],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
-        FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, RenderQuality,
-        build_planet_scene, interactive_dimensions, mouse_to_framebuffer_pixel,
-        pick_selector_world, return_to_selector,
+        FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, RenderQuality, Viewport,
+        build_planet_scene, interactive_dimensions, mouse_position_to_framebuffer_pixel,
+        mouse_to_framebuffer_pixel, pick_selector_world, render_viewport, return_to_selector,
+        write_framebuffer_rgba,
     };
     use crate::{
         camera::{Camera, CameraInput, OrbitCamera},
+        color::Color,
+        framebuffer::Framebuffer,
         math::Vec3,
         ray::Ray,
         space::{self, PlanetType, SceneState, SelectorWorld, galaxy_selector_worlds},
@@ -1109,6 +992,16 @@ mod tests {
     }
 
     #[test]
+    fn viewport_preserves_aspect_ratio_with_letterbox() {
+        let viewport = render_viewport(1920, 1080, 800, 600);
+
+        assert_eq!(viewport.width, 1440.0);
+        assert_eq!(viewport.height, 1080.0);
+        assert_eq!(viewport.x, 240.0);
+        assert_eq!(viewport.y, 0.0);
+    }
+
+    #[test]
     fn mouse_coordinates_map_to_framebuffer_pixels() {
         assert_eq!(
             mouse_to_framebuffer_pixel(400.0, 300.0, 800, 600, 400, 300),
@@ -1117,6 +1010,29 @@ mod tests {
         assert_eq!(
             mouse_to_framebuffer_pixel(799.9, 599.9, 800, 600, 400, 300),
             Some((399, 299))
+        );
+    }
+
+    #[test]
+    fn letterboxed_mouse_coordinates_ignore_bars() {
+        let viewport = Viewport {
+            x: 240.0,
+            y: 0.0,
+            width: 1440.0,
+            height: 1080.0,
+        };
+
+        assert_eq!(
+            mouse_position_to_framebuffer_pixel(240.0, 0.0, viewport, 800, 600),
+            Some((0, 0))
+        );
+        assert_eq!(
+            mouse_position_to_framebuffer_pixel(960.0, 540.0, viewport, 800, 600),
+            Some((400, 300))
+        );
+        assert_eq!(
+            mouse_position_to_framebuffer_pixel(120.0, 540.0, viewport, 800, 600),
+            None
         );
     }
 
@@ -1134,6 +1050,18 @@ mod tests {
             mouse_to_framebuffer_pixel(f32::NAN, 10.0, 800, 600, 800, 600),
             None
         );
+    }
+
+    #[test]
+    fn framebuffer_pixels_convert_to_rgba_for_raylib_texture() {
+        let mut framebuffer = Framebuffer::new(2, 1);
+        framebuffer.set_pixel(0, 0, Color::rgb(1.0, 0.5, 0.0));
+        framebuffer.set_pixel(1, 0, Color::rgb(0.0, 0.25, 1.0));
+        let mut output = [0; 8];
+
+        write_framebuffer_rgba(&framebuffer, &mut output);
+
+        assert_eq!(output, [255, 128, 0, 255, 0, 64, 255, 255]);
     }
 
     #[test]
