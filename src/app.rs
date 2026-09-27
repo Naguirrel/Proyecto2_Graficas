@@ -18,6 +18,10 @@ const FULL_QUALITY_DELAY: Duration = Duration::from_millis(180);
 const PRINT_RENDER_TIMES: bool = true;
 const LEFT_CLICK_DRAG_THRESHOLD: f32 = 5.0;
 const LEVEL_NUMBER_FONT_SIZE: i32 = 92;
+const LEVEL_NAME_FONT_SIZE: i32 = 24;
+const MENU_TITLE_FONT_SIZE: i32 = 46;
+const MENU_SUBTITLE_FONT_SIZE: i32 = 24;
+const STATUS_FONT_SIZE: i32 = 20;
 const CONTROLS_FONT_SIZE: i32 = 20;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
@@ -80,30 +84,40 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             framebuffer.width(),
             framebuffer.height(),
         );
+        let hover_planet = if scene_state == SceneState::Galaxy
+            && !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT)
+        {
+            selector_planet_under_mouse(
+                rl.get_mouse_position(),
+                &camera,
+                viewport,
+                framebuffer.width(),
+                framebuffer.height(),
+            )
+        } else {
+            None
+        };
+
         if scene_state == SceneState::Galaxy
             && !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT)
             && let Some(mouse_position) = mouse_state.update_left_click(&rl)
-            && let Some((pixel_x, pixel_y)) = mouse_position_to_framebuffer_pixel(
-                mouse_position.x,
-                mouse_position.y,
+            && let Some(planet) = selector_planet_under_mouse(
+                mouse_position,
+                &camera,
                 viewport,
                 framebuffer.width(),
                 framebuffer.height(),
             )
         {
-            let ray =
-                camera.ray_for_pixel(pixel_x, pixel_y, framebuffer.width(), framebuffer.height());
-            if let Some(planet) = pick_selector_world(&ray, &space::galaxy_selector_worlds()) {
-                select_planet(
-                    planet,
-                    aspect_ratio,
-                    &mut scene_state,
-                    &mut scene,
-                    &mut orbit_camera,
-                    &mut camera,
-                    &mut render_state,
-                )?;
-            }
+            select_planet(
+                planet,
+                aspect_ratio,
+                &mut scene_state,
+                &mut scene,
+                &mut orbit_camera,
+                &mut camera,
+                &mut render_state,
+            )?;
         }
 
         if let Some(quality) = render_state.next_render(now, FULL_QUALITY_DELAY) {
@@ -156,11 +170,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         draw_raylib_ui(
             &mut drawing,
             &camera,
-            scene_state,
-            viewport,
-            framebuffer.width(),
-            framebuffer.height(),
-            controls_width,
+            UiOverlayState {
+                scene_state,
+                hover_planet,
+                viewport,
+                framebuffer_width: framebuffer.width(),
+                framebuffer_height: framebuffer.height(),
+                controls_width,
+            },
         );
     }
 
@@ -223,14 +240,13 @@ fn mouse_orbit_delta(rl: &RaylibHandle) -> (f32, f32) {
 
 fn print_controls() {
     println!("Controles:");
-    println!("  Click izquierdo: seleccionar mundo en el selector");
-    println!("  Click derecho + mover mouse: rotar");
+    for line in controls_lines() {
+        println!("  {line}");
+    }
     println!("  W/S: inclinación");
     println!("  A/D: rotación");
     println!("  Q/E: zoom");
     println!("  R: reiniciar");
-    println!("  Backspace: volver al selector");
-    println!("  Escape: salir");
 }
 
 fn print_rayon_threads() {
@@ -361,11 +377,52 @@ fn planet_orbit_camera(planet: PlanetType, aspect_ratio: f32) -> OrbitCamera {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LevelUiMetadata {
+    planet: PlanetType,
+    level_number: u8,
+    name: &'static str,
+}
+
+fn selector_level_ui_metadata() -> [LevelUiMetadata; 3] {
+    [
+        LevelUiMetadata {
+            planet: PlanetType::BlueMoon,
+            level_number: 1,
+            name: "Luna Azul",
+        },
+        LevelUiMetadata {
+            planet: PlanetType::CookieWorld,
+            level_number: 2,
+            name: "Mundo Galleta",
+        },
+        LevelUiMetadata {
+            planet: PlanetType::AsteroidBelt,
+            level_number: 3,
+            name: "Cinturon de Asteroides",
+        },
+    ]
+}
+
+fn level_ui_metadata(planet: PlanetType) -> LevelUiMetadata {
+    selector_level_ui_metadata()
+        .into_iter()
+        .find(|metadata| metadata.planet == planet)
+        .unwrap_or(LevelUiMetadata {
+            planet,
+            level_number: 0,
+            name: "Nivel",
+        })
+}
+
 fn planet_label(planet: PlanetType) -> &'static str {
-    match planet {
-        PlanetType::BlueMoon => "Luna Azul",
-        PlanetType::CookieWorld => "Planeta galleta",
-        PlanetType::AsteroidBelt => "Cinturon de asteroides",
+    level_ui_metadata(planet).name
+}
+
+fn scene_state_label(scene_state: SceneState) -> &'static str {
+    match scene_state {
+        SceneState::Galaxy => "Menu principal",
+        SceneState::Planet(planet) => planet_label(planet),
     }
 }
 
@@ -512,6 +569,25 @@ fn pick_selector_world(ray: &Ray, worlds: &[SelectorWorld]) -> Option<PlanetType
         .map(|(planet, _)| planet)
 }
 
+fn selector_planet_under_mouse(
+    mouse_position: Vector2,
+    camera: &Camera,
+    viewport: Viewport,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
+) -> Option<PlanetType> {
+    let (pixel_x, pixel_y) = mouse_position_to_framebuffer_pixel(
+        mouse_position.x,
+        mouse_position.y,
+        viewport,
+        framebuffer_width,
+        framebuffer_height,
+    )?;
+    let ray = camera.ray_for_pixel(pixel_x, pixel_y, framebuffer_width, framebuffer_height);
+
+    pick_selector_world(&ray, &space::galaxy_selector_worlds())
+}
+
 fn ray_sphere_distance(ray: &Ray, center: Vec3, radius: f32) -> Option<f32> {
     if !radius.is_finite()
         || radius <= 0.0
@@ -622,31 +698,95 @@ fn draw_framebuffer_texture(
     );
 }
 
-fn draw_raylib_ui(
-    drawing: &mut RaylibDrawHandle<'_>,
-    camera: &Camera,
+#[derive(Debug, Clone, Copy)]
+struct UiOverlayState {
     scene_state: SceneState,
+    hover_planet: Option<PlanetType>,
     viewport: Viewport,
     framebuffer_width: usize,
     framebuffer_height: usize,
     controls_width: i32,
-) {
-    if scene_state == SceneState::Galaxy {
-        draw_selector_numbers(
+}
+
+fn draw_raylib_ui(drawing: &mut RaylibDrawHandle<'_>, camera: &Camera, ui: UiOverlayState) {
+    draw_status_overlay(drawing, ui.scene_state);
+
+    if ui.scene_state == SceneState::Galaxy {
+        draw_selector_header(drawing);
+        draw_selector_world_ui(
             drawing,
             camera,
-            viewport,
-            framebuffer_width,
-            framebuffer_height,
+            ui.hover_planet,
+            ui.viewport,
+            ui.framebuffer_width,
+            ui.framebuffer_height,
         );
     }
 
-    draw_controls_overlay(drawing, controls_width);
+    draw_controls_overlay(drawing, ui.controls_width);
 }
 
-fn draw_selector_numbers(
+fn draw_selector_header(drawing: &mut RaylibDrawHandle<'_>) {
+    let screen_width = drawing.get_screen_width();
+    draw_text_centered(
+        drawing,
+        "Angry Birds Space Diorama",
+        screen_width / 2,
+        34,
+        MENU_TITLE_FONT_SIZE,
+        Color::new(246, 248, 255, 255),
+    );
+    draw_text_centered(
+        drawing,
+        "Selecciona un planeta",
+        screen_width / 2,
+        88,
+        MENU_SUBTITLE_FONT_SIZE,
+        Color::new(174, 210, 255, 235),
+    );
+}
+
+fn draw_status_overlay(drawing: &mut RaylibDrawHandle<'_>, scene_state: SceneState) {
+    let title = scene_state_label(scene_state);
+    let instruction = match scene_state {
+        SceneState::Galaxy => "Selecciona un planeta",
+        SceneState::Planet(_) => "Backspace - Regresar al selector",
+    };
+    let panel_width = approximate_text_width(title, STATUS_FONT_SIZE)
+        .max(approximate_text_width(instruction, STATUS_FONT_SIZE - 2))
+        + 28;
+    let panel_height = 58;
+    let x = 18;
+    let y = 18;
+
+    drawing.draw_rectangle(x, y, panel_width, panel_height, Color::new(0, 0, 0, 132));
+    drawing.draw_rectangle_lines(
+        x,
+        y,
+        panel_width,
+        panel_height,
+        Color::new(110, 170, 255, 130),
+    );
+    drawing.draw_text(
+        title,
+        x + 14,
+        y + 9,
+        STATUS_FONT_SIZE,
+        Color::new(245, 248, 255, 255),
+    );
+    drawing.draw_text(
+        instruction,
+        x + 14,
+        y + 34,
+        STATUS_FONT_SIZE - 2,
+        Color::new(181, 213, 248, 235),
+    );
+}
+
+fn draw_selector_world_ui(
     drawing: &mut RaylibDrawHandle<'_>,
     camera: &Camera,
+    hover_planet: Option<PlanetType>,
     viewport: Viewport,
     framebuffer_width: usize,
     framebuffer_height: usize,
@@ -655,29 +795,165 @@ fn draw_selector_numbers(
         if let Some((x, y)) =
             project_world_to_pixel(*camera, world.center, framebuffer_width, framebuffer_height)
         {
-            let screen_x = viewport.x + (x as f32 / framebuffer_width as f32) * viewport.width;
-            let screen_y = viewport.y + (y as f32 / framebuffer_height as f32) * viewport.height;
-            let text = world.level_number.to_string();
-            let width = text.len() as i32 * LEVEL_NUMBER_FONT_SIZE / 2;
-            let x = screen_x.round() as i32 - width / 2;
-            let y = screen_y.round() as i32 - LEVEL_NUMBER_FONT_SIZE / 2;
+            let screen_x = (viewport.x + (x as f32 / framebuffer_width as f32) * viewport.width)
+                .round() as i32;
+            let screen_y = (viewport.y + (y as f32 / framebuffer_height as f32) * viewport.height)
+                .round() as i32;
+            let is_hovered = hover_planet == Some(world.planet);
+            let metadata = level_ui_metadata(world.planet);
+            let number_text = metadata.level_number.to_string();
+            let text_width = approximate_text_width(&number_text, LEVEL_NUMBER_FONT_SIZE);
+            let number_x = screen_x - text_width / 2;
+            let number_y = screen_y - LEVEL_NUMBER_FONT_SIZE / 2;
+            let radius = projected_radius_pixels(
+                *camera,
+                world.center,
+                world.radius,
+                framebuffer_height,
+                viewport,
+            );
+
+            if is_hovered {
+                draw_planet_halo(drawing, screen_x, screen_y, radius);
+            }
 
             drawing.draw_text(
-                &text,
-                x + 4,
-                y + 4,
+                &number_text,
+                number_x + 4,
+                number_y + 4,
                 LEVEL_NUMBER_FONT_SIZE,
                 Color::new(0, 0, 0, 190),
             );
             drawing.draw_text(
-                &text,
-                x,
-                y,
+                &number_text,
+                number_x,
+                number_y,
                 LEVEL_NUMBER_FONT_SIZE,
-                Color::new(255, 234, 92, 255),
+                if is_hovered {
+                    Color::new(255, 255, 176, 255)
+                } else {
+                    Color::new(255, 234, 92, 255)
+                },
             );
+            draw_level_name(
+                drawing,
+                metadata.name,
+                screen_x,
+                screen_y,
+                radius,
+                is_hovered,
+            );
+
+            if is_hovered {
+                draw_text_centered(
+                    drawing,
+                    "Click para entrar",
+                    screen_x,
+                    screen_y + radius.round() as i32 + 62,
+                    20,
+                    Color::new(238, 248, 255, 245),
+                );
+            }
         }
     }
+}
+
+fn projected_radius_pixels(
+    camera: Camera,
+    center: Vec3,
+    radius: f32,
+    framebuffer_height: usize,
+    viewport: Viewport,
+) -> f32 {
+    let basis = camera.basis();
+    let camera_to_center = center - camera.position;
+    let depth = camera_to_center.dot(basis.forward);
+
+    if !depth.is_finite() || depth <= 0.001 || !radius.is_finite() || radius <= 0.0 {
+        return 48.0;
+    }
+
+    let half_height = (camera.vertical_fov_degrees.to_radians() * 0.5).tan();
+    let framebuffer_radius = radius / (depth * half_height) * framebuffer_height as f32 * 0.5;
+    let viewport_scale = viewport.height / framebuffer_height.max(1) as f32;
+
+    (framebuffer_radius * viewport_scale).clamp(42.0, 180.0)
+}
+
+fn draw_planet_halo(drawing: &mut RaylibDrawHandle<'_>, x: i32, y: i32, radius: f32) {
+    let halo_radius = radius.round() as i32 + 16;
+
+    drawing.draw_circle_lines(x, y, halo_radius as f32, Color::new(255, 237, 120, 245));
+    drawing.draw_circle_lines(
+        x,
+        y,
+        (halo_radius + 6) as f32,
+        Color::new(130, 190, 255, 185),
+    );
+}
+
+fn draw_level_name(
+    drawing: &mut RaylibDrawHandle<'_>,
+    name: &str,
+    center_x: i32,
+    center_y: i32,
+    radius: f32,
+    highlighted: bool,
+) {
+    let y = center_y + radius.round() as i32 + 24;
+    let width = approximate_text_width(name, LEVEL_NAME_FONT_SIZE);
+    let x = center_x - width / 2;
+    let background_padding = 10;
+
+    drawing.draw_rectangle(
+        x - background_padding,
+        y - 4,
+        width + background_padding * 2,
+        LEVEL_NAME_FONT_SIZE + 12,
+        Color::new(0, 0, 0, if highlighted { 176 } else { 132 }),
+    );
+    drawing.draw_text(
+        name,
+        x + 2,
+        y + 2,
+        LEVEL_NAME_FONT_SIZE,
+        Color::new(0, 0, 0, 180),
+    );
+    drawing.draw_text(
+        name,
+        x,
+        y,
+        LEVEL_NAME_FONT_SIZE,
+        if highlighted {
+            Color::new(255, 246, 158, 255)
+        } else {
+            Color::new(218, 235, 255, 245)
+        },
+    );
+}
+
+fn draw_text_centered(
+    drawing: &mut RaylibDrawHandle<'_>,
+    text: &str,
+    center_x: i32,
+    y: i32,
+    font_size: i32,
+    color: Color,
+) {
+    let width = approximate_text_width(text, font_size);
+
+    drawing.draw_text(
+        text,
+        center_x - width / 2 + 2,
+        y + 2,
+        font_size,
+        Color::new(0, 0, 0, 170),
+    );
+    drawing.draw_text(text, center_x - width / 2, y, font_size, color);
+}
+
+fn approximate_text_width(text: &str, font_size: i32) -> i32 {
+    text.chars().count() as i32 * font_size / 2
 }
 
 fn controls_overlay_width(rl: &RaylibHandle) -> i32 {
@@ -720,8 +996,8 @@ fn draw_controls_overlay(drawing: &mut RaylibDrawHandle<'_>, panel_width: i32) {
 
 fn controls_lines() -> [&'static str; 5] {
     [
-        "Click izquierdo: seleccionar",
-        "Click derecho + mover: rotar",
+        "Click izq: seleccionar",
+        "Click der + mover: rotar",
         "Rueda: zoom",
         "Backspace: regresar",
         "Esc: salir",
@@ -772,18 +1048,21 @@ fn project_world_to_pixel(
 mod tests {
     use super::{
         FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, RenderQuality, Viewport,
-        build_planet_scene, interactive_dimensions, mouse_position_to_framebuffer_pixel,
-        mouse_to_framebuffer_pixel, pick_selector_world, render_viewport, return_to_selector,
-        write_framebuffer_rgba,
+        build_planet_scene, controls_lines, interactive_dimensions, level_ui_metadata,
+        mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel, pick_selector_world,
+        project_world_to_pixel, render_viewport, return_to_selector, scene_state_label,
+        selector_level_ui_metadata, selector_planet_under_mouse, write_framebuffer_rgba,
     };
     use crate::{
         camera::{Camera, CameraInput, OrbitCamera},
+        cinema,
         color::Color,
         framebuffer::Framebuffer,
         math::Vec3,
         ray::Ray,
         space::{self, PlanetType, SceneState, SelectorWorld, galaxy_selector_worlds},
     };
+    use raylib::prelude::Vector2;
     use std::time::{Duration, Instant};
 
     const EPSILON: f32 = 0.0001;
@@ -1124,6 +1403,117 @@ mod tests {
     }
 
     #[test]
+    fn selector_ui_metadata_declares_three_named_levels() {
+        let metadata = selector_level_ui_metadata();
+
+        assert_eq!(metadata.len(), 3);
+        assert_eq!(metadata[0].planet, PlanetType::BlueMoon);
+        assert_eq!(metadata[0].level_number, 1);
+        assert_eq!(metadata[0].name, "Luna Azul");
+        assert_eq!(metadata[1].planet, PlanetType::CookieWorld);
+        assert_eq!(metadata[1].level_number, 2);
+        assert_eq!(metadata[1].name, "Mundo Galleta");
+        assert_eq!(metadata[2].planet, PlanetType::AsteroidBelt);
+        assert_eq!(metadata[2].level_number, 3);
+        assert_eq!(metadata[2].name, "Cinturon de Asteroides");
+    }
+
+    #[test]
+    fn each_selector_planet_has_matching_ui_name_and_number() {
+        for world in galaxy_selector_worlds() {
+            let metadata = level_ui_metadata(world.planet);
+
+            assert_eq!(metadata.level_number, world.level_number);
+            assert!(!metadata.name.is_empty());
+        }
+    }
+
+    #[test]
+    fn selector_still_has_three_clickable_planets() {
+        let worlds = galaxy_selector_worlds();
+
+        assert_eq!(worlds.len(), 3);
+        assert!(worlds.iter().all(|world| world.radius > 0.0));
+        assert!(worlds.iter().all(|world| world.level_number > 0));
+    }
+
+    #[test]
+    fn selector_status_labels_describe_menu_and_levels() {
+        assert_eq!(scene_state_label(SceneState::Galaxy), "Menu principal");
+        assert_eq!(
+            scene_state_label(SceneState::Planet(PlanetType::BlueMoon)),
+            "Luna Azul"
+        );
+        assert_eq!(
+            scene_state_label(SceneState::Planet(PlanetType::CookieWorld)),
+            "Mundo Galleta"
+        );
+        assert_eq!(
+            scene_state_label(SceneState::Planet(PlanetType::AsteroidBelt)),
+            "Cinturon de Asteroides"
+        );
+    }
+
+    #[test]
+    fn controls_overlay_uses_compact_raylib_text() {
+        assert_eq!(
+            controls_lines(),
+            [
+                "Click izq: seleccionar",
+                "Click der + mover: rotar",
+                "Rueda: zoom",
+                "Backspace: regresar",
+                "Esc: salir",
+            ]
+        );
+    }
+
+    #[test]
+    fn hover_from_projected_mouse_identifies_each_selector_planet() {
+        let width = 1920;
+        let height = 1080;
+        let camera = space::galaxy_selector_orbit_camera(width as f32 / height as f32).to_camera();
+        let viewport = render_viewport(width as i32, height as i32, width, height);
+
+        for world in galaxy_selector_worlds() {
+            let (x, y) = project_world_to_pixel(camera, world.center, width, height)
+                .expect("selector world should be visible");
+            let hovered = selector_planet_under_mouse(
+                Vector2::new(x as f32 + 0.5, y as f32 + 0.5),
+                &camera,
+                viewport,
+                width,
+                height,
+            );
+
+            assert_eq!(hovered, Some(world.planet));
+        }
+    }
+
+    #[test]
+    fn mouse_outside_selector_planets_has_no_hover_or_selection() {
+        let width = 1920;
+        let height = 1080;
+        let camera = space::galaxy_selector_orbit_camera(width as f32 / height as f32).to_camera();
+        let viewport = render_viewport(width as i32, height as i32, width, height);
+
+        assert_eq!(
+            selector_planet_under_mouse(Vector2::new(12.0, 12.0), &camera, viewport, width, height),
+            None
+        );
+        assert_eq!(
+            selector_planet_under_mouse(
+                Vector2::new(-10.0, 200.0),
+                &camera,
+                viewport,
+                width,
+                height,
+            ),
+            None
+        );
+    }
+
+    #[test]
     fn ray_picking_selects_blue_moon_when_ray_points_to_blue_selector() {
         let worlds = galaxy_selector_worlds();
         let blue = worlds
@@ -1227,6 +1617,28 @@ mod tests {
         assert!(scene.object_count() >= 7);
         assert!(scene.skybox().is_some());
         assert!(scene.lights().len() >= 5);
+    }
+
+    #[test]
+    fn selector_planets_open_individual_scenes() {
+        for planet in [
+            PlanetType::BlueMoon,
+            PlanetType::CookieWorld,
+            PlanetType::AsteroidBelt,
+        ] {
+            let scene = build_planet_scene(planet).unwrap();
+
+            assert!(scene.object_count() > 0);
+            assert!(scene.skybox().is_some());
+        }
+    }
+
+    #[test]
+    fn cinema_scene_still_builds_after_selector_ui_changes() {
+        let scene = cinema::build_cinema_scene().unwrap();
+
+        assert!(scene.object_count() > 0);
+        assert!(scene.skybox().is_some());
     }
 
     #[test]
