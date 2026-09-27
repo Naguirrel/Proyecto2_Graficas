@@ -21,16 +21,6 @@ const LEVEL_NUMBER_FONT_SIZE: i32 = 92;
 const CONTROLS_FONT_SIZE: i32 = 20;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut framebuffer = Framebuffer::new(WIDTH, HEIGHT);
-    let (interactive_width, interactive_height) =
-        interactive_dimensions(WIDTH, HEIGHT, INTERACTIVE_SCALE);
-    let mut interactive_framebuffer = Framebuffer::new(interactive_width, interactive_height);
-    let mut texture_pixels = vec![0; WIDTH * HEIGHT * 4];
-    let aspect_ratio = WIDTH as f32 / HEIGHT as f32;
-    let mut scene_state = SceneState::Galaxy;
-    let mut orbit_camera = space::galaxy_selector_orbit_camera(aspect_ratio);
-    let mut scene = space::build_galaxy_selector_scene()?;
-
     let (mut rl, thread) = raylib::init()
         .size(WIDTH as i32, HEIGHT as i32)
         .title(space::SPACE_WORLDS_WINDOW_TITLE)
@@ -39,7 +29,19 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     rl.set_exit_key(None);
     rl.set_target_fps(60);
 
-    let render_image = Image::gen_image_color(WIDTH as i32, HEIGHT as i32, Color::BLACK);
+    let (render_width, render_height) = visible_framebuffer_dimensions(&rl);
+    let mut framebuffer = Framebuffer::new(render_width, render_height);
+    let (interactive_width, interactive_height) =
+        interactive_dimensions(render_width, render_height, INTERACTIVE_SCALE);
+    let mut interactive_framebuffer = Framebuffer::new(interactive_width, interactive_height);
+    let mut texture_pixels = vec![0; render_width * render_height * 4];
+    let aspect_ratio = render_width as f32 / render_height as f32;
+    let mut scene_state = SceneState::Galaxy;
+    let mut orbit_camera = space::galaxy_selector_orbit_camera(aspect_ratio);
+    let mut scene = space::build_galaxy_selector_scene()?;
+
+    let render_image =
+        Image::gen_image_color(render_width as i32, render_height as i32, Color::BLACK);
     let mut render_texture = rl.load_texture_from_image(&thread, &render_image)?;
     render_texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
 
@@ -72,8 +74,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             render_state.mark_camera_changed(now);
         }
 
-        let viewport =
-            render_viewport(rl.get_screen_width(), rl.get_screen_height(), WIDTH, HEIGHT);
+        let viewport = render_viewport(
+            rl.get_screen_width(),
+            rl.get_screen_height(),
+            framebuffer.width(),
+            framebuffer.height(),
+        );
         if scene_state == SceneState::Galaxy
             && !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT)
             && let Some(mouse_position) = mouse_state.update_left_click(&rl)
@@ -81,11 +87,12 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 mouse_position.x,
                 mouse_position.y,
                 viewport,
-                WIDTH,
-                HEIGHT,
+                framebuffer.width(),
+                framebuffer.height(),
             )
         {
-            let ray = camera.ray_for_pixel(pixel_x, pixel_y, WIDTH, HEIGHT);
+            let ray =
+                camera.ray_for_pixel(pixel_x, pixel_y, framebuffer.width(), framebuffer.height());
             if let Some(planet) = pick_selector_world(&ray, &space::galaxy_selector_worlds()) {
                 select_planet(
                     planet,
@@ -104,7 +111,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
             match quality {
                 RenderQuality::Interactive => {
-                    let (width, height) = interactive_dimensions(WIDTH, HEIGHT, INTERACTIVE_SCALE);
+                    let (width, height) = interactive_dimensions(
+                        framebuffer.width(),
+                        framebuffer.height(),
+                        INTERACTIVE_SCALE,
+                    );
                     interactive_framebuffer.resize(width, height);
                     renderer::render_scene(&mut interactive_framebuffer, &camera, &scene);
                     framebuffer.copy_scaled_nearest_from(&interactive_framebuffer);
@@ -126,13 +137,31 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             render_texture.update_texture(&texture_pixels)?;
         }
 
-        let viewport =
-            render_viewport(rl.get_screen_width(), rl.get_screen_height(), WIDTH, HEIGHT);
+        let viewport = render_viewport(
+            rl.get_screen_width(),
+            rl.get_screen_height(),
+            framebuffer.width(),
+            framebuffer.height(),
+        );
         let controls_width = controls_overlay_width(&rl);
         let mut drawing = rl.begin_drawing(&thread);
         drawing.clear_background(Color::BLACK);
-        draw_framebuffer_texture(&mut drawing, &render_texture, viewport);
-        draw_raylib_ui(&mut drawing, &camera, scene_state, viewport, controls_width);
+        draw_framebuffer_texture(
+            &mut drawing,
+            &render_texture,
+            viewport,
+            framebuffer.width(),
+            framebuffer.height(),
+        );
+        draw_raylib_ui(
+            &mut drawing,
+            &camera,
+            scene_state,
+            viewport,
+            framebuffer.width(),
+            framebuffer.height(),
+            controls_width,
+        );
     }
 
     Ok(())
@@ -159,6 +188,13 @@ fn enter_fullscreen(rl: &mut RaylibHandle) {
         rl.set_window_size(screen_width, screen_height);
         rl.toggle_borderless_windowed();
     }
+}
+
+fn visible_framebuffer_dimensions(rl: &RaylibHandle) -> (usize, usize) {
+    (
+        rl.get_screen_width().max(1) as usize,
+        rl.get_screen_height().max(1) as usize,
+    )
 }
 
 fn read_camera_input(rl: &RaylibHandle, mouse_orbit_delta: (f32, f32)) -> CameraInput {
@@ -568,10 +604,17 @@ fn draw_framebuffer_texture(
     drawing: &mut RaylibDrawHandle<'_>,
     texture: &Texture2D,
     viewport: Viewport,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
 ) {
     drawing.draw_texture_pro(
         texture,
-        Rectangle::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32),
+        Rectangle::new(
+            0.0,
+            0.0,
+            framebuffer_width as f32,
+            framebuffer_height as f32,
+        ),
         Rectangle::new(viewport.x, viewport.y, viewport.width, viewport.height),
         Vector2::new(0.0, 0.0),
         0.0,
@@ -584,20 +627,36 @@ fn draw_raylib_ui(
     camera: &Camera,
     scene_state: SceneState,
     viewport: Viewport,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
     controls_width: i32,
 ) {
     if scene_state == SceneState::Galaxy {
-        draw_selector_numbers(drawing, camera, viewport);
+        draw_selector_numbers(
+            drawing,
+            camera,
+            viewport,
+            framebuffer_width,
+            framebuffer_height,
+        );
     }
 
     draw_controls_overlay(drawing, controls_width);
 }
 
-fn draw_selector_numbers(drawing: &mut RaylibDrawHandle<'_>, camera: &Camera, viewport: Viewport) {
+fn draw_selector_numbers(
+    drawing: &mut RaylibDrawHandle<'_>,
+    camera: &Camera,
+    viewport: Viewport,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
+) {
     for world in space::galaxy_selector_worlds() {
-        if let Some((x, y)) = project_world_to_pixel(*camera, world.center, WIDTH, HEIGHT) {
-            let screen_x = viewport.x + (x as f32 / WIDTH as f32) * viewport.width;
-            let screen_y = viewport.y + (y as f32 / HEIGHT as f32) * viewport.height;
+        if let Some((x, y)) =
+            project_world_to_pixel(*camera, world.center, framebuffer_width, framebuffer_height)
+        {
+            let screen_x = viewport.x + (x as f32 / framebuffer_width as f32) * viewport.width;
+            let screen_y = viewport.y + (y as f32 / framebuffer_height as f32) * viewport.height;
             let text = world.level_number.to_string();
             let width = text.len() as i32 * LEVEL_NUMBER_FONT_SIZE / 2;
             let x = screen_x.round() as i32 - width / 2;
