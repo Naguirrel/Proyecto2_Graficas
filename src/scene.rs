@@ -190,6 +190,12 @@ impl Scene {
 
         closest_hit
     }
+
+    pub fn intersects_any(&self, ray: &Ray, t_min: f32, t_max: f32) -> bool {
+        self.objects
+            .iter()
+            .any(|primitive| primitive.intersect(ray, t_min, t_max).is_some())
+    }
 }
 
 impl Default for Scene {
@@ -654,6 +660,41 @@ mod tests {
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
 
         assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn intersects_any_matches_linear_intersection_for_primitive_types() {
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        for primitive in [
+            Primitive::from(unit_cube(0)),
+            Primitive::from(unit_sphere(0)),
+            Primitive::from(unit_oriented_box(0)),
+            Primitive::from(unit_cylinder(0)),
+            Primitive::from(unit_cone(0)),
+        ] {
+            let mut scene = diffuse_scene();
+            scene.add_primitive(primitive).unwrap();
+
+            assert_eq!(
+                scene.intersects_any(&ray, 0.001, 100.0),
+                scene.intersect(&ray, 0.001, 100.0).is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn intersects_any_returns_false_when_ray_misses_everything() {
+        let mut scene = diffuse_scene();
+        scene.add_cube(unit_cube(0)).unwrap();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        scene.add_oriented_box(unit_oriented_box(0)).unwrap();
+        scene.add_cylinder(unit_cylinder(0)).unwrap();
+        scene.add_cone(unit_cone(0)).unwrap();
+        let ray = Ray::new(Vec3::new(4.0, 4.0, 4.0), Vec3::new(1.0, 0.0, 0.0));
+
+        assert!(!scene.intersects_any(&ray, 0.001, 100.0));
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_none());
     }
 
     #[test]

@@ -447,9 +447,7 @@ pub(crate) fn is_light_visible(scene: &Scene, hit: &Intersection, light: &PointL
         return true;
     }
 
-    scene
-        .intersect(&shadow_ray, SHADOW_EPSILON, shadow_t_max)
-        .is_none()
+    !scene.intersects_any(&shadow_ray, SHADOW_EPSILON, shadow_t_max)
 }
 
 pub(crate) fn background_color(direction: Vec3) -> Color {

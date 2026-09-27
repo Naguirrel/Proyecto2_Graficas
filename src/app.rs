@@ -14,6 +14,10 @@ use crate::{
 const WIDTH: usize = 800;
 const HEIGHT: usize = 600;
 const INTERACTIVE_SCALE: f32 = 0.5;
+const LEVEL_FULL_MAX_WIDTH: usize = 1280;
+const LEVEL_FULL_MAX_HEIGHT: usize = 720;
+const LEVEL_INTERACTIVE_MAX_WIDTH: usize = 640;
+const LEVEL_INTERACTIVE_MAX_HEIGHT: usize = 360;
 const FULL_QUALITY_DELAY: Duration = Duration::from_millis(180);
 const PRINT_RENDER_TIMES: bool = true;
 const LEFT_CLICK_DRAG_THRESHOLD: f32 = 5.0;
@@ -37,7 +41,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut framebuffer = Framebuffer::new(render_width, render_height);
     let (interactive_width, interactive_height) =
         interactive_dimensions(render_width, render_height, INTERACTIVE_SCALE);
-    let mut interactive_framebuffer = Framebuffer::new(interactive_width, interactive_height);
+    let mut render_buffer = Framebuffer::new(interactive_width, interactive_height);
     let mut texture_pixels = vec![0; render_width * render_height * 4];
     let aspect_ratio = render_width as f32 / render_height as f32;
     let mut scene_state = SceneState::Galaxy;
@@ -122,30 +126,29 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 
         if let Some(quality) = render_state.next_render(now, FULL_QUALITY_DELAY) {
             let started = Instant::now();
+            let (width, height) = render_dimensions_for(
+                scene_state,
+                quality,
+                framebuffer.width(),
+                framebuffer.height(),
+            );
 
-            match quality {
-                RenderQuality::Interactive => {
-                    let (width, height) = interactive_dimensions(
-                        framebuffer.width(),
-                        framebuffer.height(),
-                        INTERACTIVE_SCALE,
-                    );
-                    interactive_framebuffer.resize(width, height);
-                    renderer::render_scene(&mut interactive_framebuffer, &camera, &scene);
-                    framebuffer.copy_scaled_nearest_from(&interactive_framebuffer);
-                    print_render_timing(quality, width, height, started.elapsed());
-                }
-                RenderQuality::Full => {
-                    renderer::render_scene(&mut framebuffer, &camera, &scene);
-                    print_render_timing(
-                        quality,
-                        framebuffer.width(),
-                        framebuffer.height(),
-                        started.elapsed(),
-                    );
-                }
+            if width == framebuffer.width() && height == framebuffer.height() {
+                renderer::render_scene(&mut framebuffer, &camera, &scene);
+            } else {
+                render_buffer.resize(width, height);
+                renderer::render_scene(&mut render_buffer, &camera, &scene);
+                framebuffer.copy_scaled_nearest_from(&render_buffer);
             }
 
+            print_render_timing(
+                scene_state,
+                &scene,
+                quality,
+                width,
+                height,
+                started.elapsed(),
+            );
             render_state.render_completed(quality);
             write_framebuffer_rgba(&framebuffer, &mut texture_pixels);
             render_texture.update_texture(&texture_pixels)?;
@@ -300,6 +303,13 @@ impl InteractiveRenderState {
         self.full_quality_pending = true;
     }
 
+    fn mark_scene_changed_interactive(&mut self, now: Instant) {
+        self.scene_dirty = true;
+        self.last_interaction = Some(now);
+        self.interactive_mode = true;
+        self.full_quality_pending = true;
+    }
+
     fn next_render(&mut self, now: Instant, full_quality_delay: Duration) -> Option<RenderQuality> {
         self.update_interactive_mode(now, full_quality_delay);
 
@@ -349,13 +359,75 @@ fn scaled_interactive_dimension(full_dimension: usize, scale: f32) -> usize {
     ((full_dimension as f32 * scale).round() as usize).clamp(1, maximum)
 }
 
-fn print_render_timing(quality: RenderQuality, width: usize, height: usize, duration: Duration) {
+fn render_dimensions_for(
+    scene_state: SceneState,
+    quality: RenderQuality,
+    display_width: usize,
+    display_height: usize,
+) -> (usize, usize) {
+    match (scene_state, quality) {
+        (SceneState::Galaxy, RenderQuality::Full) => (display_width.max(1), display_height.max(1)),
+        (SceneState::Galaxy, RenderQuality::Interactive) => {
+            interactive_dimensions(display_width, display_height, INTERACTIVE_SCALE)
+        }
+        (SceneState::Planet(_), RenderQuality::Full) => capped_render_dimensions(
+            display_width,
+            display_height,
+            LEVEL_FULL_MAX_WIDTH,
+            LEVEL_FULL_MAX_HEIGHT,
+        ),
+        (SceneState::Planet(_), RenderQuality::Interactive) => capped_render_dimensions(
+            display_width,
+            display_height,
+            LEVEL_INTERACTIVE_MAX_WIDTH,
+            LEVEL_INTERACTIVE_MAX_HEIGHT,
+        ),
+    }
+}
+
+fn capped_render_dimensions(
+    display_width: usize,
+    display_height: usize,
+    max_width: usize,
+    max_height: usize,
+) -> (usize, usize) {
+    let display_width = display_width.max(1);
+    let display_height = display_height.max(1);
+    let max_width = max_width.max(1);
+    let max_height = max_height.max(1);
+    let scale = (max_width as f32 / display_width as f32)
+        .min(max_height as f32 / display_height as f32)
+        .min(1.0);
+
+    (
+        scaled_interactive_dimension(display_width, scale),
+        scaled_interactive_dimension(display_height, scale),
+    )
+}
+
+fn print_render_timing(
+    scene_state: SceneState,
+    scene: &Scene,
+    quality: RenderQuality,
+    width: usize,
+    height: usize,
+    duration: Duration,
+) {
     if PRINT_RENDER_TIMES {
         println!(
-            "Render {} {}x{} terminado en {:.2?}",
+            "Render scene={} quality={} resolution={}x{} objects={} spheres={} cubes={} oriented_boxes={} cylinders={} cones={} lights={} rayon_threads={} duration={:.2?}",
+            performance_scene_label(scene_state),
             quality.label(),
             width,
             height,
+            scene.object_count(),
+            scene.sphere_count(),
+            scene.cube_count(),
+            scene.oriented_box_count(),
+            scene.cylinder_count(),
+            scene.cone_count(),
+            scene.lights().len(),
+            rayon::current_num_threads(),
             duration
         );
     }
@@ -426,6 +498,15 @@ fn scene_state_label(scene_state: SceneState) -> &'static str {
     }
 }
 
+fn performance_scene_label(scene_state: SceneState) -> &'static str {
+    match scene_state {
+        SceneState::Galaxy => "selector",
+        SceneState::Planet(PlanetType::BlueMoon) => "BlueMoon",
+        SceneState::Planet(PlanetType::CookieWorld) => "CookieWorld",
+        SceneState::Planet(PlanetType::AsteroidBelt) => "AsteroidBelt",
+    }
+}
+
 fn select_planet(
     planet: PlanetType,
     aspect_ratio: f32,
@@ -439,7 +520,7 @@ fn select_planet(
     *scene = build_planet_scene(planet)?;
     *orbit_camera = planet_orbit_camera(planet, aspect_ratio);
     *camera = orbit_camera.to_camera();
-    render_state.mark_scene_changed();
+    render_state.mark_scene_changed_interactive(Instant::now());
     println!("Mundo seleccionado: {}", planet_label(planet));
 
     Ok(())
@@ -1050,8 +1131,9 @@ mod tests {
         FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, RenderQuality, Viewport,
         build_planet_scene, controls_lines, interactive_dimensions, level_ui_metadata,
         mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel, pick_selector_world,
-        project_world_to_pixel, render_viewport, return_to_selector, scene_state_label,
-        selector_level_ui_metadata, selector_planet_under_mouse, write_framebuffer_rgba,
+        project_world_to_pixel, render_dimensions_for, render_viewport, return_to_selector,
+        scene_state_label, selector_level_ui_metadata, selector_planet_under_mouse,
+        write_framebuffer_rgba,
     };
     use crate::{
         camera::{Camera, CameraInput, OrbitCamera},
@@ -1320,13 +1402,53 @@ mod tests {
     fn full_quality_render_uses_visible_resolution() {
         let mut state = InteractiveRenderState::new();
         let now = Instant::now();
-        let full_dimensions = (800, 600);
 
         assert_eq!(
             state.next_render(now, FULL_QUALITY_DELAY),
             Some(RenderQuality::Full)
         );
-        assert_eq!(full_dimensions, (800, 600));
+        assert_eq!(
+            render_dimensions_for(SceneState::Galaxy, RenderQuality::Full, 1920, 1080),
+            (1920, 1080)
+        );
+        assert_eq!(
+            render_dimensions_for(
+                SceneState::Planet(PlanetType::BlueMoon),
+                RenderQuality::Full,
+                1920,
+                1080,
+            ),
+            (1280, 720)
+        );
+    }
+
+    #[test]
+    fn level_interactive_render_uses_capped_preview_resolution() {
+        assert_eq!(
+            render_dimensions_for(
+                SceneState::Planet(PlanetType::CookieWorld),
+                RenderQuality::Interactive,
+                1920,
+                1080,
+            ),
+            (640, 360)
+        );
+    }
+
+    #[test]
+    fn selected_level_scene_change_starts_with_interactive_render() {
+        let mut state = clean_state();
+        let now = Instant::now();
+
+        state.mark_scene_changed_interactive(now);
+
+        assert!(state.scene_dirty);
+        assert!(state.interactive_mode);
+        assert!(state.full_quality_pending);
+        assert_eq!(
+            state.next_render(now, FULL_QUALITY_DELAY),
+            Some(RenderQuality::Interactive)
+        );
     }
 
     #[test]
