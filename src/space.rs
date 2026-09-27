@@ -36,8 +36,8 @@ pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(2.65, -0.20, -0.28);
 pub const GALAXY_SELECTOR_COOKIE_RADIUS: f32 = 0.90;
 pub const GALAXY_SELECTOR_LEVEL_THREE_CENTER: Vec3 = Vec3::new(0.0, 1.72, -0.46);
 pub const GALAXY_SELECTOR_LEVEL_THREE_RADIUS: f32 = 0.78;
-const SPACE_SKYBOX_WIDTH: usize = 320;
-const SPACE_SKYBOX_HEIGHT: usize = 160;
+const SPACE_SKYBOX_WIDTH: usize = 960;
+const SPACE_SKYBOX_HEIGHT: usize = 480;
 const SPACE_SUN_U: f32 = 0.125;
 const SPACE_SUN_V: f32 = 0.770;
 const SKYBOX_ASTEROID_A_U: f32 = 0.675;
@@ -448,7 +448,7 @@ fn space_skybox_color(u: f32, v: f32) -> Color {
 
     color = add_cartoon_sun(color, u, v, sun_distance);
 
-    let mist = smooth_hash(u * 41.0 + 9.0, v * 29.0 + 5.0) * 0.010;
+    let mist = smooth_noise(u * 7.0 + 1.7, v * 5.0 + 0.9) * 0.010;
     color += Color::new(0.020, 0.070, 0.090) * mist;
 
     let star = star_strength(u, v);
@@ -470,7 +470,7 @@ fn add_cartoon_sun(color: Color, u: f32, v: f32, sun_distance: f32) -> Color {
     let inner_glow = 1.0 - smoothstep(0.0, 0.078, sun_distance);
     let mut sun_color =
         Color::new(1.0, 0.720, 0.180).lerp(Color::new(1.0, 0.930, 0.520), inner_glow);
-    let mottling = smooth_hash(u * 62.0 + 5.0, v * 51.0 + 17.0) * 0.12;
+    let mottling = smooth_noise(u * 18.0 + 2.0, v * 15.0 + 4.0) * 0.09;
     sun_color += Color::new(0.060, 0.025, 0.0) * mottling;
 
     let spot_a = 1.0 - smoothstep(0.014, 0.034, wrapped_uv_distance(u, v, 0.100, 0.790, 1.35));
@@ -641,6 +641,21 @@ fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {
 fn smooth_hash(x: f32, y: f32) -> f32 {
     let value = (x * 12.9898 + y * 78.233).sin() * 43_758.547;
     value - value.floor()
+}
+
+fn smooth_noise(x: f32, y: f32) -> f32 {
+    let x0 = x.floor();
+    let y0 = y.floor();
+    let tx = smoothstep(0.0, 1.0, x - x0);
+    let ty = smoothstep(0.0, 1.0, y - y0);
+    let a = smooth_hash(x0, y0);
+    let b = smooth_hash(x0 + 1.0, y0);
+    let c = smooth_hash(x0, y0 + 1.0);
+    let d = smooth_hash(x0 + 1.0, y0 + 1.0);
+    let top = a + (b - a) * tx;
+    let bottom = c + (d - c) * tx;
+
+    top + (bottom - top) * ty
 }
 
 fn add_selector_worlds(
@@ -1770,7 +1785,11 @@ mod tests {
         register_space_materials, space_levels_orbit_camera, space_menu_skybox, space_skybox_color,
         space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
-    use crate::{material::Material, math::Vec3, ray::Ray, scene::Scene};
+    use crate::{color::Color, material::Material, math::Vec3, ray::Ray, scene::Scene};
+
+    fn color_delta(left: Color, right: Color) -> f32 {
+        (left.r - right.r).abs() + (left.g - right.g).abs() + (left.b - right.b).abs()
+    }
 
     #[test]
     fn blue_moon_scene_builds_valid_scene() {
@@ -1882,8 +1901,8 @@ mod tests {
             }
         }
 
-        assert!(texture.width() >= 256);
-        assert!(texture.height() >= 128);
+        assert!(texture.width() >= 960);
+        assert!(texture.height() >= 480);
         assert_ne!(top, middle);
         assert_ne!(bottom, middle);
         assert!(sun.r > 0.95);
@@ -1892,6 +1911,16 @@ mod tests {
         assert!(sun.r > sun.b);
         assert!(bottom.b > 0.18);
         assert!(bright_pixels >= 12);
+    }
+
+    #[test]
+    fn space_skybox_background_samples_change_smoothly() {
+        let base = space_skybox_color(0.52, 0.52);
+        let horizontal_neighbor = space_skybox_color(0.521, 0.52);
+        let vertical_neighbor = space_skybox_color(0.52, 0.521);
+
+        assert!(color_delta(base, horizontal_neighbor) < 0.015);
+        assert!(color_delta(base, vertical_neighbor) < 0.015);
     }
 
     #[test]

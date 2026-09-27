@@ -41,7 +41,7 @@ impl Skybox {
             return Color::BLACK;
         };
 
-        (self.texture.sample(uv, WrapMode::Clamp) * self.intensity).clamped()
+        (self.texture.sample_bilinear(uv, WrapMode::Clamp) * self.intensity).clamped()
     }
 
     pub(crate) fn direction_to_uv(&self, direction: Vec3) -> Option<Vec2> {
