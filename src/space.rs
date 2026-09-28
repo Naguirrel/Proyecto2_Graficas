@@ -21,6 +21,7 @@ pub const BLUE_MOON_WINDOW_TITLE: &str = "Angry Birds Space Diorama - Luna Azul"
 pub const SPACE_WORLDS_WINDOW_TITLE: &str = "Angry Birds Space Diorama - Worlds";
 pub const BLUE_MOON_PLANET_CENTER: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 pub const BLUE_MOON_PLANET_RADIUS: f32 = 1.25;
+const BLUE_MOON_ATMOSPHERE_RADIUS: f32 = 3.05;
 pub const COOKIE_PLANET_CENTER: Vec3 = Vec3::new(4.45, -0.30, -0.25);
 pub const COOKIE_PLANET_RADIUS: f32 = 1.45;
 pub const LEVEL_THREE_PLANET_CENTER: Vec3 = Vec3::new(-0.35, 0.05, 0.10);
@@ -137,6 +138,10 @@ pub(crate) struct SpaceSceneMetadata {
     pub blue_moon_stone_structure_parts: usize,
     pub blue_moon_pig_count: usize,
     pub blue_moon_second_structure_parts: usize,
+    pub blue_moon_slingshot_dirt_parts: usize,
+    pub blue_moon_slingshot_wood_parts: usize,
+    pub blue_moon_chuck_count: usize,
+    pub blue_moon_atmosphere_id: Option<usize>,
     pub decorative_asteroid_count: usize,
     pub cookie_chocolate_chip_count: usize,
     pub candy_count: usize,
@@ -703,6 +708,8 @@ fn add_blue_moon_world(
 ) -> Result<(), SpaceBuildError> {
     add_planet(scene, metadata, materials)?;
     add_blue_moon_surface_details(scene, metadata, materials)?;
+    add_blue_moon_atmosphere(scene, metadata, materials)?;
+    add_blue_moon_slingshot_mound(scene, metadata, materials)?;
     add_blue_moon_wood_structure(scene, metadata, materials)?;
     add_blue_moon_side_wood_tower(scene, metadata, materials)?;
     add_blue_moon_second_structure(scene, metadata, materials)?;
@@ -999,6 +1006,22 @@ fn add_planet(
         materials.moon,
     )?)?;
     metadata.planet_id = Some(planet_id);
+
+    Ok(())
+}
+
+fn add_blue_moon_atmosphere(
+    scene: &mut Scene,
+    metadata: &mut SpaceSceneMetadata,
+    materials: SpaceMaterials,
+) -> Result<(), SpaceBuildError> {
+    let atmosphere_id = scene.object_count();
+    scene.add_sphere(Sphere::new(
+        BLUE_MOON_PLANET_CENTER,
+        BLUE_MOON_ATMOSPHERE_RADIUS,
+        materials.gravity_field,
+    )?)?;
+    metadata.blue_moon_atmosphere_id = Some(atmosphere_id);
 
     Ok(())
 }
@@ -1304,6 +1327,71 @@ fn add_blue_moon_side_wood_tower(
         metadata.blue_moon_pig_count += 1;
         metadata.pig_count += 1;
     }
+
+    Ok(())
+}
+
+fn add_blue_moon_slingshot_mound(
+    scene: &mut Scene,
+    metadata: &mut SpaceSceneMetadata,
+    materials: SpaceMaterials,
+) -> Result<(), SpaceBuildError> {
+    let frame = blue_moon_slingshot_frame()?;
+    let mound_top = 0.475;
+
+    for (center, half_extents) in [
+        (Vec3::new(0.00, 0.020, 0.00), Vec3::new(0.48, 0.120, 0.30)),
+        (Vec3::new(-0.08, 0.185, 0.00), Vec3::new(0.36, 0.085, 0.24)),
+        (Vec3::new(0.12, 0.285, 0.04), Vec3::new(0.24, 0.070, 0.18)),
+        (Vec3::new(-0.18, 0.325, -0.03), Vec3::new(0.22, 0.070, 0.18)),
+        (Vec3::new(-0.03, 0.430, 0.00), Vec3::new(0.20, 0.045, 0.14)),
+    ] {
+        add_radial_box(scene, frame, center, half_extents, materials.moon_dirt)?;
+        metadata.blue_moon_slingshot_dirt_parts += 1;
+    }
+
+    for (center, half_extents) in [
+        (Vec3::new(0.00, 0.650, 0.00), Vec3::new(0.030, 0.175, 0.030)),
+        (
+            Vec3::new(-0.115, 0.780, 0.00),
+            Vec3::new(0.030, 0.205, 0.030),
+        ),
+        (
+            Vec3::new(0.115, 0.780, 0.00),
+            Vec3::new(0.030, 0.205, 0.030),
+        ),
+        (Vec3::new(0.00, 0.985, 0.00), Vec3::new(0.150, 0.028, 0.030)),
+        (
+            Vec3::new(0.00, 0.845, 0.050),
+            Vec3::new(0.115, 0.018, 0.018),
+        ),
+    ] {
+        add_radial_box(scene, frame, center, half_extents, materials.wood)?;
+        metadata.blue_moon_slingshot_wood_parts += 1;
+        metadata.wood_parts += 1;
+    }
+
+    for local_center in [
+        Vec3::new(-0.135, mound_top + 0.075, 0.165),
+        Vec3::new(0.045, mound_top + 0.075, 0.180),
+    ] {
+        add_chuck_cone(
+            scene,
+            frame.local_to_world(local_center),
+            0.055,
+            0.075,
+            frame.basis(),
+            materials,
+        )?;
+        metadata.blue_moon_chuck_count += 1;
+    }
+
+    let launch_point = frame.local_to_world(Vec3::new(0.00, 0.955, 0.055));
+    let target_point = blue_moon_side_tower_frame()?.local_to_world(Vec3::new(0.00, 0.820, 0.035));
+    let flying_center = launch_point * 0.52 + target_point * 0.48;
+    let flying_basis = basis_with_up((target_point - launch_point).normalized())?;
+    add_chuck_cone(scene, flying_center, 0.065, 0.130, flying_basis, materials)?;
+    metadata.blue_moon_chuck_count += 1;
 
     Ok(())
 }
@@ -1717,6 +1805,25 @@ fn add_space_pig_at(
     Ok(())
 }
 
+fn add_chuck_cone(
+    scene: &mut Scene,
+    center: Vec3,
+    base_radius: f32,
+    half_height: f32,
+    orientation: Basis3,
+    materials: SpaceMaterials,
+) -> Result<(), SpaceBuildError> {
+    scene.add_cone(Cone::new(
+        center,
+        base_radius,
+        half_height,
+        orientation,
+        materials.level_three,
+    )?)?;
+
+    Ok(())
+}
+
 /// Second fortress of Luna Azul: wood and stone pillars with a TNT crate on
 /// the ground, a stone floor holding one pig, and a hollow stone square with a
 /// pillar on top. It stands on its own dirt base, separated from the first one.
@@ -1839,6 +1946,19 @@ fn facing_basis(frame: RadialFrame) -> Result<Basis3, SpaceBuildError> {
     Ok(Basis3::new(basis.right(), basis.forward(), -basis.up())?)
 }
 
+fn basis_with_up(up_axis: Vec3) -> Result<Basis3, SpaceBuildError> {
+    let up = up_axis.normalized();
+    let auxiliary = if up.y.abs() < 0.85 {
+        Vec3::new(0.0, 1.0, 0.0)
+    } else {
+        Vec3::new(1.0, 0.0, 0.0)
+    };
+    let right = up.cross(auxiliary).normalized();
+    let forward = right.cross(up).normalized();
+
+    Ok(Basis3::new(right, up, forward)?)
+}
+
 fn add_radial_box(
     scene: &mut Scene,
     frame: RadialFrame,
@@ -1902,6 +2022,15 @@ fn blue_moon_side_tower_frame() -> Result<RadialFrame, SpaceBuildError> {
     )?)
 }
 
+fn blue_moon_slingshot_frame() -> Result<RadialFrame, SpaceBuildError> {
+    Ok(RadialFrame::from_latitude_longitude(
+        BLUE_MOON_PLANET_CENTER,
+        BLUE_MOON_PLANET_RADIUS,
+        0.55,
+        -2.10,
+    )?)
+}
+
 fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
     Ok(RadialFrame::from_latitude_longitude(
         COOKIE_PLANET_CENTER,
@@ -1914,15 +2043,16 @@ fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BLUE_MOON_LEVEL_PIG_COUNT, BLUE_MOON_PLANET_CENTER, BLUE_MOON_PLANET_RADIUS,
-        BLUE_MOON_PLANET_TEXTURE_PATH, COOKIE_LEVEL_PIG_COUNT, COOKIE_PLANET_CENTER,
-        COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
-        GALAXY_SELECTOR_LEVEL_THREE_CENTER, LEVEL_THREE_PLANET_CENTER, LEVEL_THREE_PLANET_RADIUS,
-        PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U,
-        SPACE_SUN_V, STONE_BLOCK_TEXTURE_PATH, SceneState, SpaceMaterials, TNT_CRATE_TEXTURE_PATH,
+        BLUE_MOON_ATMOSPHERE_RADIUS, BLUE_MOON_LEVEL_PIG_COUNT, BLUE_MOON_PLANET_CENTER,
+        BLUE_MOON_PLANET_RADIUS, BLUE_MOON_PLANET_TEXTURE_PATH, COOKIE_LEVEL_PIG_COUNT,
+        COOKIE_PLANET_CENTER, COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER,
+        GALAXY_SELECTOR_COOKIE_CENTER, GALAXY_SELECTOR_LEVEL_THREE_CENTER,
+        LEVEL_THREE_PLANET_CENTER, LEVEL_THREE_PLANET_RADIUS, PlanetType, SKYBOX_ASTEROID_A_U,
+        SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U, SPACE_SUN_V,
+        STONE_BLOCK_TEXTURE_PATH, SceneState, SpaceMaterials, TNT_CRATE_TEXTURE_PATH,
         WOOD_BLOCK_TEXTURE_PATH, add_radial_box, blue_moon_orbit_camera,
         blue_moon_second_structure_frame, blue_moon_side_tower_frame, blue_moon_skybox,
-        blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
+        blue_moon_slingshot_frame, blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
         build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
         build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
         cookie_level_frame, cookie_world_orbit_camera, cookie_world_skybox,
@@ -1956,6 +2086,7 @@ mod tests {
         assert!(scene.object_count() > 0);
         assert!(scene.object_count() < 180);
         assert!(metadata.planet_id.is_some());
+        assert!(metadata.blue_moon_atmosphere_id.is_some());
         assert!(metadata.cookie_planet_id.is_none());
         assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
     }
@@ -2188,7 +2319,7 @@ mod tests {
         assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
         assert_eq!(metadata.blue_moon_pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
         assert_eq!(metadata.decorative_asteroid_count, 0);
-        assert_eq!(metadata.wood_parts, 14);
+        assert_eq!(metadata.wood_parts, 19);
         assert_eq!(metadata.ice_or_metal_parts, 0);
         assert_eq!(metadata.tnt_parts, 1);
         assert_eq!(metadata.blue_moon_crater_count, 5);
@@ -2196,21 +2327,28 @@ mod tests {
         assert_eq!(metadata.blue_moon_dirt_base_parts, 4);
         assert_eq!(metadata.blue_moon_stone_structure_parts, 7);
         assert_eq!(metadata.blue_moon_second_structure_parts, 14);
+        assert_eq!(metadata.blue_moon_slingshot_dirt_parts, 5);
+        assert_eq!(metadata.blue_moon_slingshot_wood_parts, 5);
+        assert_eq!(metadata.blue_moon_chuck_count, 3);
         assert_eq!(
             scene.sphere_count(),
-            1 + metadata.blue_moon_stone_count + metadata.blue_moon_pig_count * 5
+            2 + metadata.blue_moon_stone_count + metadata.blue_moon_pig_count * 5
         );
         assert_eq!(
             scene.cylinder_count(),
             metadata.blue_moon_crater_count + metadata.blue_moon_pig_count
         );
-        assert_eq!(scene.cone_count(), metadata.blue_moon_pig_count * 2);
+        assert_eq!(
+            scene.cone_count(),
+            metadata.blue_moon_pig_count * 2 + metadata.blue_moon_chuck_count
+        );
         assert_eq!(
             scene.oriented_box_count(),
             metadata.blue_moon_dirt_base_parts
                 + metadata.wood_parts
                 + metadata.blue_moon_stone_structure_parts
                 + metadata.blue_moon_second_structure_parts
+                + metadata.blue_moon_slingshot_dirt_parts
         );
     }
 
@@ -2223,14 +2361,16 @@ mod tests {
         assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
         assert_eq!(
             scene.object_count(),
-            1 + metadata.blue_moon_crater_count
+            2 + metadata.blue_moon_crater_count
                 + metadata.blue_moon_stone_count
                 + metadata.blue_moon_dirt_base_parts
                 + metadata.wood_parts
                 + metadata.blue_moon_stone_structure_parts
                 + metadata.blue_moon_second_structure_parts
+                + metadata.blue_moon_slingshot_dirt_parts
+                + metadata.blue_moon_chuck_count
                 + metadata.blue_moon_pig_count * 8,
-            "the blue moon level should contain only the textured planet, surface details, both structures, and pigs"
+            "the blue moon level should contain only the textured planet, atmosphere, surface details, structures, slingshot scene, chucks, and pigs"
         );
     }
 
@@ -2312,7 +2452,7 @@ mod tests {
         assert_eq!(planet.radius(), BLUE_MOON_PLANET_RADIUS);
         assert_eq!(
             scene.sphere_count(),
-            1 + metadata.blue_moon_stone_count + metadata.blue_moon_pig_count * 5
+            2 + metadata.blue_moon_stone_count + metadata.blue_moon_pig_count * 5
         );
 
         for primitive in scene.objects() {
@@ -2335,6 +2475,29 @@ mod tests {
         }
 
         assert_eq!(surface_stones, metadata.blue_moon_stone_count);
+    }
+
+    #[test]
+    fn blue_moon_atmosphere_wraps_the_tallest_level_piece() {
+        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+        let SpaceMaterials { gravity_field, .. } =
+            register_space_materials(&mut Scene::new()).unwrap();
+        let atmosphere = scene.objects()[metadata.blue_moon_atmosphere_id.unwrap()]
+            .as_sphere()
+            .unwrap();
+        let material = scene.material(atmosphere.material_id()).unwrap();
+        let farthest_box_edge = scene
+            .oriented_boxes()
+            .map(|part| {
+                (part.center() - BLUE_MOON_PLANET_CENTER).length() + part.half_extents().length()
+            })
+            .fold(0.0, f32::max);
+
+        assert_eq!(atmosphere.center(), BLUE_MOON_PLANET_CENTER);
+        assert_eq!(atmosphere.radius(), BLUE_MOON_ATMOSPHERE_RADIUS);
+        assert_eq!(atmosphere.material_id(), gravity_field);
+        assert!(material.transparency > 0.98);
+        assert!(atmosphere.radius() > farthest_box_edge);
     }
 
     #[test]
@@ -2368,11 +2531,12 @@ mod tests {
             .world_to_local_vector(point - frame.surface_point())
     }
 
-    fn blue_moon_structure_frames() -> [RadialFrame; 3] {
+    fn blue_moon_structure_frames() -> [RadialFrame; 4] {
         [
             blue_moon_structure_frame().unwrap(),
             blue_moon_second_structure_frame().unwrap(),
             blue_moon_side_tower_frame().unwrap(),
+            blue_moon_slingshot_frame().unwrap(),
         ]
     }
 
@@ -2566,9 +2730,11 @@ mod tests {
         let mut dirt_parts = 0;
         let mut wood_parts = 0;
         let mut stone_parts = 0;
+        let tower_wood_parts = metadata.wood_parts - metadata.blue_moon_slingshot_wood_parts;
 
         assert_eq!(metadata.blue_moon_dirt_base_parts, 4);
-        assert_eq!(metadata.wood_parts, 14);
+        assert_eq!(tower_wood_parts, 14);
+        assert_eq!(metadata.blue_moon_slingshot_wood_parts, 5);
         assert_eq!(metadata.blue_moon_stone_structure_parts, 7);
 
         for box_object in blue_moon_structure_boxes(&scene, 0)
@@ -2602,8 +2768,69 @@ mod tests {
         }
 
         assert_eq!(dirt_parts, metadata.blue_moon_dirt_base_parts);
-        assert_eq!(wood_parts, metadata.wood_parts);
+        assert_eq!(wood_parts, tower_wood_parts);
         assert_eq!(stone_parts, metadata.blue_moon_stone_structure_parts);
+    }
+
+    #[test]
+    fn blue_moon_slingshot_mound_uses_textured_wood_and_launches_chucks() {
+        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+        let SpaceMaterials {
+            moon_dirt,
+            wood,
+            level_three,
+            ..
+        } = register_space_materials(&mut Scene::new()).unwrap();
+        let frame = blue_moon_slingshot_frame().unwrap();
+        let sling_boxes = blue_moon_structure_boxes(&scene, 3);
+        let dirt_parts = sling_boxes
+            .iter()
+            .filter(|part| part.material_id() == moon_dirt)
+            .count();
+        let wood_parts = sling_boxes
+            .iter()
+            .filter(|part| part.material_id() == wood)
+            .count();
+        let wood_material = scene.material(wood).unwrap();
+        let chucks: Vec<_> = scene
+            .cones()
+            .filter(|cone| cone.material_id() == level_three)
+            .collect();
+        let grounded_chucks = chucks
+            .iter()
+            .filter(|chuck| {
+                let local = structure_local_point(frame, chuck.center());
+
+                local.y < 0.62 && local.z > 0.12
+            })
+            .count();
+        let launch_point = frame.local_to_world(Vec3::new(0.00, 0.955, 0.055));
+        let target_point = blue_moon_side_tower_frame()
+            .unwrap()
+            .local_to_world(Vec3::new(0.00, 0.820, 0.035));
+        let flight_distance = (target_point - launch_point).length();
+        let flying_chucks = chucks
+            .iter()
+            .filter(|chuck| {
+                let launch_distance = (chuck.center() - launch_point).length();
+                let target_distance = (chuck.center() - target_point).length();
+
+                (launch_distance + target_distance - flight_distance).abs() < 0.035
+                    && launch_distance > 0.20
+                    && target_distance > 0.20
+            })
+            .count();
+
+        assert_eq!(
+            sling_boxes.len(),
+            metadata.blue_moon_slingshot_dirt_parts + metadata.blue_moon_slingshot_wood_parts
+        );
+        assert_eq!(dirt_parts, metadata.blue_moon_slingshot_dirt_parts);
+        assert_eq!(wood_parts, metadata.blue_moon_slingshot_wood_parts);
+        assert!(scene.texture(wood_material.texture_id.unwrap()).is_some());
+        assert_eq!(chucks.len(), metadata.blue_moon_chuck_count);
+        assert_eq!(grounded_chucks, 2);
+        assert_eq!(flying_chucks, 1);
     }
 
     #[test]
@@ -2645,7 +2872,10 @@ mod tests {
 
         assert_eq!(second.len(), metadata.blue_moon_second_structure_parts);
         assert_eq!(
-            first.len() + second.len() + blue_moon_structure_boxes(&scene, 2).len(),
+            first.len()
+                + second.len()
+                + blue_moon_structure_boxes(&scene, 2).len()
+                + blue_moon_structure_boxes(&scene, 3).len(),
             scene.oriented_box_count(),
             "every box belongs to one of the Luna Azul structures"
         );
