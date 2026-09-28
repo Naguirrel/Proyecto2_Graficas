@@ -26,7 +26,7 @@ pub const COOKIE_PLANET_RADIUS: f32 = 1.45;
 pub const LEVEL_THREE_PLANET_CENTER: Vec3 = Vec3::new(-0.35, 0.05, 0.10);
 pub const LEVEL_THREE_PLANET_RADIUS: f32 = 1.70;
 pub const SPACE_SUN_DIRECTION: Vec3 = Vec3::new(-0.76, 0.54, -0.36);
-pub const BLUE_MOON_LEVEL_PIG_COUNT: usize = 3;
+pub const BLUE_MOON_LEVEL_PIG_COUNT: usize = 4;
 pub const COOKIE_LEVEL_PIG_COUNT: usize = 2;
 pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-2.85, 0.26, 0.0);
 pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 0.98;
@@ -45,6 +45,7 @@ const SKYBOX_ASTEROID_B_V: f32 = 0.455;
 const SKYBOX_ASTEROID_C_U: f32 = 0.425;
 const SKYBOX_ASTEROID_C_V: f32 = 0.730;
 const BLUE_MOON_PLANET_TEXTURE_PATH: &str = "assets/textures/blue_moon_planet.ppm";
+const TNT_CRATE_TEXTURE_PATH: &str = "assets/textures/tnt_crate.ppm";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneState {
@@ -111,6 +112,7 @@ struct SpaceMaterials {
     ice: usize,
     metal: usize,
     tnt: usize,
+    tnt_crate: usize,
     candy_red: usize,
     candy_blue: usize,
     candy_yellow: usize,
@@ -132,6 +134,7 @@ pub(crate) struct SpaceSceneMetadata {
     pub blue_moon_dirt_base_parts: usize,
     pub blue_moon_stone_structure_parts: usize,
     pub blue_moon_pig_count: usize,
+    pub blue_moon_second_structure_parts: usize,
     pub decorative_asteroid_count: usize,
     pub cookie_chocolate_chip_count: usize,
     pub candy_count: usize,
@@ -699,12 +702,14 @@ fn add_blue_moon_world(
     add_planet(scene, metadata, materials)?;
     add_blue_moon_surface_details(scene, metadata, materials)?;
     add_blue_moon_wood_structure(scene, metadata, materials)?;
+    add_blue_moon_second_structure(scene, metadata, materials)?;
 
     Ok(())
 }
 
 fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBuildError> {
     let moon_texture = scene.add_texture(Texture::from_ppm_file(BLUE_MOON_PLANET_TEXTURE_PATH)?);
+    let tnt_crate_texture = scene.add_texture(Texture::from_ppm_file(TNT_CRATE_TEXTURE_PATH)?);
 
     let moon = scene.add_material(
         Material::new(
@@ -927,6 +932,18 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
     ))?;
     let eye = scene.add_material(Material::diffuse(Color::WHITE))?;
     let pupil = scene.add_material(Material::diffuse(Color::BLACK))?;
+    let tnt_crate = scene.add_material(
+        Material::new(
+            Color::WHITE,
+            0.18,
+            20.0,
+            0.0,
+            0.0,
+            1.0,
+            Color::new(0.05, 0.03, 0.015),
+        )
+        .with_texture(tnt_crate_texture, Vec2::new(1.0, 1.0), WrapMode::Clamp),
+    )?;
 
     Ok(SpaceMaterials {
         moon,
@@ -948,6 +965,7 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         ice,
         metal,
         tnt,
+        tnt_crate,
         candy_red,
         candy_blue,
         candy_yellow,
@@ -1618,6 +1636,120 @@ fn add_space_pig_at(
     Ok(())
 }
 
+/// Second fortress of Luna Azul: wood and stone pillars with a TNT crate on
+/// the ground, a stone floor holding one pig, and a hollow stone square with a
+/// pillar on top. It stands on its own dirt base, separated from the first one.
+fn add_blue_moon_second_structure(
+    scene: &mut Scene,
+    metadata: &mut SpaceSceneMetadata,
+    materials: SpaceMaterials,
+) -> Result<(), SpaceBuildError> {
+    let frame = blue_moon_second_structure_frame()?;
+    // Top of the dirt base, where the ground-level pieces stand.
+    let ground_top = 0.08;
+    // Top of the first stone floor, where the pig rests.
+    let first_floor_top = 0.43;
+    let pig_radius = 0.105;
+
+    for (center, half_extents, material_id) in [
+        // Dirt base, thick enough to stay buried under its corners.
+        (
+            Vec3::new(0.00, -0.03, 0.00),
+            Vec3::new(0.44, 0.11, 0.24),
+            materials.moon_dirt,
+        ),
+        // Ground level: stone pillar, TNT crate and two wood pillars.
+        (
+            Vec3::new(-0.35, ground_top + 0.13, 0.00),
+            Vec3::new(0.05, 0.13, 0.045),
+            materials.moon_stone,
+        ),
+        (
+            Vec3::new(-0.15, ground_top + 0.10, 0.00),
+            Vec3::new(0.10, 0.10, 0.10),
+            materials.tnt_crate,
+        ),
+        (
+            Vec3::new(0.06, ground_top + 0.13, 0.00),
+            Vec3::new(0.045, 0.13, 0.045),
+            materials.wood,
+        ),
+        (
+            Vec3::new(0.30, ground_top + 0.13, 0.00),
+            Vec3::new(0.045, 0.13, 0.045),
+            materials.wood,
+        ),
+        // First stone floor.
+        (
+            Vec3::new(-0.02, first_floor_top - 0.045, 0.00),
+            Vec3::new(0.38, 0.045, 0.06),
+            materials.moon_stone,
+        ),
+        // Stone pillars around the pig.
+        (
+            Vec3::new(-0.22, first_floor_top + 0.12, 0.00),
+            Vec3::new(0.045, 0.12, 0.045),
+            materials.moon_stone,
+        ),
+        (
+            Vec3::new(0.18, first_floor_top + 0.12, 0.00),
+            Vec3::new(0.045, 0.12, 0.045),
+            materials.moon_stone,
+        ),
+        // Second stone floor.
+        (
+            Vec3::new(-0.02, 0.71, 0.00),
+            Vec3::new(0.28, 0.04, 0.06),
+            materials.moon_stone,
+        ),
+        // Hollow stone square: bottom, top, left and right sides.
+        (
+            Vec3::new(0.02, 0.775, 0.00),
+            Vec3::new(0.13, 0.025, 0.05),
+            materials.moon_stone,
+        ),
+        (
+            Vec3::new(0.02, 0.985, 0.00),
+            Vec3::new(0.13, 0.025, 0.05),
+            materials.moon_stone,
+        ),
+        (
+            Vec3::new(-0.085, 0.88, 0.00),
+            Vec3::new(0.025, 0.08, 0.045),
+            materials.moon_stone,
+        ),
+        (
+            Vec3::new(0.125, 0.88, 0.00),
+            Vec3::new(0.025, 0.08, 0.045),
+            materials.moon_stone,
+        ),
+        // Pillar on top of the square.
+        (
+            Vec3::new(0.02, 1.13, 0.00),
+            Vec3::new(0.04, 0.12, 0.04),
+            materials.moon_stone,
+        ),
+    ] {
+        add_radial_box(scene, frame, center, half_extents, material_id)?;
+        metadata.blue_moon_second_structure_parts += 1;
+        if material_id == materials.tnt_crate {
+            metadata.tnt_parts += 1;
+        }
+    }
+
+    add_space_pig_at(
+        scene,
+        frame,
+        Vec3::new(-0.02, first_floor_top + pig_radius, 0.00),
+        pig_radius,
+        materials,
+    )?;
+    metadata.blue_moon_pig_count += 1;
+    metadata.pig_count += 1;
+
+    Ok(())
+}
+
 /// Basis whose local Y axis points along the frame tangent Z, so cylinders and
 /// cones built with it lie parallel to the ground and point to the front.
 fn facing_basis(frame: RadialFrame) -> Result<Basis3, SpaceBuildError> {
@@ -1671,6 +1803,15 @@ fn blue_moon_structure_frame() -> Result<RadialFrame, SpaceBuildError> {
     )?)
 }
 
+fn blue_moon_second_structure_frame() -> Result<RadialFrame, SpaceBuildError> {
+    Ok(RadialFrame::from_latitude_longitude(
+        BLUE_MOON_PLANET_CENTER,
+        BLUE_MOON_PLANET_RADIUS,
+        0.60,
+        0.90,
+    )?)
+}
+
 fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
     Ok(RadialFrame::from_latitude_longitude(
         COOKIE_PLANET_CENTER,
@@ -1688,8 +1829,9 @@ mod tests {
         COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
         GALAXY_SELECTOR_LEVEL_THREE_CENTER, LEVEL_THREE_PLANET_CENTER, LEVEL_THREE_PLANET_RADIUS,
         PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U,
-        SPACE_SUN_V, SceneState, SpaceMaterials, add_radial_box, blue_moon_orbit_camera,
-        blue_moon_skybox, blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
+        SPACE_SUN_V, SceneState, SpaceMaterials, TNT_CRATE_TEXTURE_PATH, add_radial_box,
+        blue_moon_orbit_camera, blue_moon_second_structure_frame, blue_moon_skybox,
+        blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
         build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
         build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
         cookie_level_frame, cookie_world_orbit_camera, cookie_world_skybox,
@@ -1698,7 +1840,8 @@ mod tests {
         space_skybox_color, space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
     use crate::{
-        color::Color, material::Material, math::Vec3, radial::RadialFrame, ray::Ray, scene::Scene,
+        color::Color, material::Material, math::Vec3, oriented_box::OrientedBox,
+        radial::RadialFrame, ray::Ray, scene::Scene, texture::Texture,
     };
 
     fn color_delta(left: Color, right: Color) -> f32 {
@@ -1950,11 +2093,12 @@ mod tests {
         assert_eq!(metadata.decorative_asteroid_count, 0);
         assert_eq!(metadata.wood_parts, 4);
         assert_eq!(metadata.ice_or_metal_parts, 0);
-        assert_eq!(metadata.tnt_parts, 0);
+        assert_eq!(metadata.tnt_parts, 1);
         assert_eq!(metadata.blue_moon_crater_count, 5);
         assert_eq!(metadata.blue_moon_stone_count, 9);
         assert_eq!(metadata.blue_moon_dirt_base_parts, 3);
         assert_eq!(metadata.blue_moon_stone_structure_parts, 6);
+        assert_eq!(metadata.blue_moon_second_structure_parts, 14);
         assert_eq!(
             scene.sphere_count(),
             1 + metadata.blue_moon_stone_count + metadata.blue_moon_pig_count * 5
@@ -1969,6 +2113,7 @@ mod tests {
             metadata.blue_moon_dirt_base_parts
                 + metadata.wood_parts
                 + metadata.blue_moon_stone_structure_parts
+                + metadata.blue_moon_second_structure_parts
         );
     }
 
@@ -1986,8 +2131,9 @@ mod tests {
                 + metadata.blue_moon_dirt_base_parts
                 + metadata.wood_parts
                 + metadata.blue_moon_stone_structure_parts
+                + metadata.blue_moon_second_structure_parts
                 + metadata.blue_moon_pig_count * 8,
-            "the blue moon level should contain only the textured planet, surface details, dirt base, tiered structure, and pigs"
+            "the blue moon level should contain only the textured planet, surface details, both structures, and pigs"
         );
     }
 
@@ -2125,12 +2271,80 @@ mod tests {
             .world_to_local_vector(point - frame.surface_point())
     }
 
+    fn blue_moon_structure_frames() -> [RadialFrame; 2] {
+        [
+            blue_moon_structure_frame().unwrap(),
+            blue_moon_second_structure_frame().unwrap(),
+        ]
+    }
+
+    /// Index of the Luna Azul structure whose radial direction is closest to `point`.
+    fn blue_moon_structure_index(point: Vec3) -> usize {
+        let direction = (point - BLUE_MOON_PLANET_CENTER).normalized();
+        let frames = blue_moon_structure_frames();
+
+        if direction.dot(frames[0].outward()) >= direction.dot(frames[1].outward()) {
+            0
+        } else {
+            1
+        }
+    }
+
+    fn blue_moon_structure_boxes(scene: &Scene, index: usize) -> Vec<OrientedBox> {
+        scene
+            .oriented_boxes()
+            .filter(|part| blue_moon_structure_index(part.center()) == index)
+            .copied()
+            .collect()
+    }
+
+    /// Largest gap between the projections of two boxes over the separating
+    /// axis candidates. A positive value is a lower bound of their distance.
+    fn oriented_box_separation(left: &OrientedBox, right: &OrientedBox) -> f32 {
+        let left_axes = [
+            left.orientation().right(),
+            left.orientation().up(),
+            left.orientation().forward(),
+        ];
+        let right_axes = [
+            right.orientation().right(),
+            right.orientation().up(),
+            right.orientation().forward(),
+        ];
+        let mut candidates = Vec::new();
+        candidates.extend(left_axes);
+        candidates.extend(right_axes);
+        for left_axis in left_axes {
+            for right_axis in right_axes {
+                let cross = left_axis.cross(right_axis);
+                if cross.length() > 0.0001 {
+                    candidates.push(cross.normalized());
+                }
+            }
+        }
+        let projected_radius = |part: &OrientedBox, axes: [Vec3; 3], axis: Vec3| {
+            let half = part.half_extents();
+            half.x * axes[0].dot(axis).abs()
+                + half.y * axes[1].dot(axis).abs()
+                + half.z * axes[2].dot(axis).abs()
+        };
+
+        candidates
+            .into_iter()
+            .map(|axis| {
+                (right.center() - left.center()).dot(axis).abs()
+                    - projected_radius(left, left_axes, axis)
+                    - projected_radius(right, right_axes, axis)
+            })
+            .fold(f32::MIN, f32::max)
+    }
+
     #[test]
     fn blue_moon_pigs_rest_on_top_of_structure_parts() {
         const CONTACT_TOLERANCE: f32 = 0.001;
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
         let SpaceMaterials { pig, .. } = register_space_materials(&mut Scene::new()).unwrap();
-        let frame = blue_moon_structure_frame().unwrap();
+        let frames = blue_moon_structure_frames();
         let pig_bodies: Vec<_> = scene
             .objects()
             .iter()
@@ -2141,11 +2355,13 @@ mod tests {
         assert_eq!(pig_bodies.len(), metadata.blue_moon_pig_count);
 
         for body in pig_bodies {
+            let index = blue_moon_structure_index(body.center());
+            let frame = frames[index];
             let center = structure_local_point(frame, body.center());
             let bottom = center.y - body.radius();
             let mut supports = 0;
 
-            for part in scene.oriented_boxes() {
+            for part in blue_moon_structure_boxes(&scene, index) {
                 let part_center = structure_local_point(frame, part.center());
                 let half_extents = part.half_extents();
                 let closest = Vec3::new(
@@ -2187,7 +2403,8 @@ mod tests {
         let SpaceMaterials {
             pig, snout, eye, ..
         } = register_space_materials(&mut Scene::new()).unwrap();
-        let basis = blue_moon_structure_frame().unwrap().basis();
+        let frames = blue_moon_structure_frames();
+        let basis_at = |point: Vec3| frames[blue_moon_structure_index(point)].basis();
         let spheres_with = |material_id: usize| -> Vec<_> {
             scene
                 .objects()
@@ -2210,6 +2427,7 @@ mod tests {
         assert_eq!(ears.len(), BLUE_MOON_LEVEL_PIG_COUNT * 2);
 
         for snout_part in snouts {
+            let basis = basis_at(snout_part.center());
             let axis = snout_part.orientation().up();
 
             assert!(axis.dot(basis.up()).abs() < AXIS_TOLERANCE);
@@ -2217,6 +2435,8 @@ mod tests {
         }
 
         for ear in ears {
+            let basis = basis_at(ear.center());
+
             assert!(ear.orientation().up().dot(basis.up()) > 1.0 - AXIS_TOLERANCE);
         }
 
@@ -2229,7 +2449,8 @@ mod tests {
                     left_distance.total_cmp(&right_distance)
                 })
                 .unwrap();
-            let offset = basis.world_to_local_vector(eye_ball.center() - body.center());
+            let offset =
+                basis_at(body.center()).world_to_local_vector(eye_ball.center() - body.center());
 
             assert!(offset.z > body.radius() * 0.5);
             assert!(offset.z > offset.y);
@@ -2247,7 +2468,7 @@ mod tests {
         assert_eq!(metadata.wood_parts, 4);
         assert_eq!(metadata.blue_moon_stone_structure_parts, 6);
 
-        for box_object in scene.oriented_boxes() {
+        for box_object in blue_moon_structure_boxes(&scene, 0) {
             let surface_clearance =
                 (box_object.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
             let half_extents = box_object.half_extents();
@@ -2277,6 +2498,79 @@ mod tests {
         assert_eq!(dirt_parts, metadata.blue_moon_dirt_base_parts);
         assert_eq!(wood_parts, metadata.wood_parts);
         assert_eq!(stone_parts, metadata.blue_moon_stone_structure_parts);
+    }
+
+    #[test]
+    fn blue_moon_second_structure_is_near_but_separate_from_first() {
+        const MIN_GAP: f32 = 0.10;
+        const MAX_GAP: f32 = 0.40;
+        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+        let first = blue_moon_structure_boxes(&scene, 0);
+        let second = blue_moon_structure_boxes(&scene, 1);
+
+        assert_eq!(second.len(), metadata.blue_moon_second_structure_parts);
+        assert_eq!(
+            first.len() + second.len(),
+            scene.oriented_box_count(),
+            "every box belongs to one of the two structures"
+        );
+
+        let closest_gap = first
+            .iter()
+            .flat_map(|left| {
+                second
+                    .iter()
+                    .map(move |right| oriented_box_separation(left, right))
+            })
+            .fold(f32::MAX, f32::min);
+
+        assert!(
+            closest_gap >= MIN_GAP,
+            "structures touch: gap {closest_gap}"
+        );
+        assert!(
+            closest_gap <= MAX_GAP,
+            "structures too far: gap {closest_gap}"
+        );
+    }
+
+    #[test]
+    fn blue_moon_second_structure_has_textured_tnt_on_its_dirt_base() {
+        const CONTACT_TOLERANCE: f32 = 0.001;
+        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+        let SpaceMaterials {
+            tnt_crate,
+            moon_dirt,
+            ..
+        } = register_space_materials(&mut Scene::new()).unwrap();
+        let frame = blue_moon_second_structure_frame().unwrap();
+        let second = blue_moon_structure_boxes(&scene, 1);
+        let crates: Vec<_> = second
+            .iter()
+            .filter(|part| part.material_id() == tnt_crate)
+            .collect();
+        let dirt = second
+            .iter()
+            .find(|part| part.material_id() == moon_dirt)
+            .unwrap();
+        let material = scene.material(tnt_crate).unwrap();
+
+        assert_eq!(crates.len(), 1);
+        assert_eq!(metadata.tnt_parts, 1);
+        assert!(scene.texture(material.texture_id.unwrap()).is_some());
+
+        let crate_center = structure_local_point(frame, crates[0].center());
+        let dirt_top = structure_local_point(frame, dirt.center()).y + dirt.half_extents().y;
+
+        assert!((crate_center.y - crates[0].half_extents().y - dirt_top).abs() < CONTACT_TOLERANCE);
+    }
+
+    #[test]
+    fn tnt_crate_texture_loads_from_assets() {
+        let texture = Texture::from_ppm_file(TNT_CRATE_TEXTURE_PATH).unwrap();
+
+        assert!(texture.width() > 0);
+        assert!(texture.height() > 0);
     }
 
     #[test]
