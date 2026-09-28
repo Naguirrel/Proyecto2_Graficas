@@ -1388,6 +1388,10 @@ mod tests {
         (left.r - right.r).abs() + (left.g - right.g).abs() + (left.b - right.b).abs()
     }
 
+    fn luminance(color: Color) -> f32 {
+        color.r * 0.2126 + color.g * 0.7152 + color.b * 0.0722
+    }
+
     #[test]
     fn blue_moon_scene_builds_valid_scene() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
@@ -1697,6 +1701,10 @@ mod tests {
         let lower = texture
             .pixel(texture.width() / 2, texture.height() - texture.height() / 8)
             .unwrap();
+        let north_pole = texture.pixel(texture.width() / 2, 0).unwrap();
+        let south_pole = texture
+            .pixel(texture.width() / 2, texture.height() - 1)
+            .unwrap();
 
         assert_eq!(
             BLUE_MOON_PLANET_TEXTURE_PATH,
@@ -1707,6 +1715,8 @@ mod tests {
         assert_eq!(material.uv_scale, crate::math::Vec2::new(1.0, 1.0));
         assert!(color_delta(top, middle) > 0.02);
         assert!(color_delta(middle, lower) > 0.02);
+        assert!(luminance(north_pole) > 0.28);
+        assert!(luminance(south_pole) > 0.22);
     }
 
     #[test]
