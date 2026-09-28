@@ -288,7 +288,7 @@ pub(crate) fn build_space_levels_scene_with_metadata()
 
 pub fn blue_moon_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
     OrbitCamera::new(
-        Vec3::new(-0.75, 0.35, 0.70),
+        BLUE_MOON_PLANET_CENTER,
         -0.30,
         0.15,
         9.7,
@@ -300,7 +300,7 @@ pub fn blue_moon_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
 
 pub fn cookie_world_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
     OrbitCamera::new(
-        COOKIE_PLANET_CENTER + Vec3::new(-0.08, 0.18, 0.0),
+        COOKIE_PLANET_CENTER,
         -0.30,
         0.16,
         7.5,
@@ -312,7 +312,7 @@ pub fn cookie_world_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
 
 pub fn level_three_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
     OrbitCamera::new(
-        LEVEL_THREE_PLANET_CENTER + Vec3::new(0.06, 0.12, 0.0),
+        LEVEL_THREE_PLANET_CENTER,
         0.22,
         0.18,
         6.9,
@@ -2131,6 +2131,22 @@ mod tests {
 
         assert!(camera.position.length() > BLUE_MOON_PLANET_RADIUS * 1.30);
         assert!(hit.distance > 1.0);
+    }
+
+    #[test]
+    fn level_orbit_cameras_target_primary_planet_centers() {
+        assert_eq!(
+            blue_moon_orbit_camera(4.0 / 3.0).target,
+            BLUE_MOON_PLANET_CENTER
+        );
+        assert_eq!(
+            cookie_world_orbit_camera(4.0 / 3.0).target,
+            COOKIE_PLANET_CENTER
+        );
+        assert_eq!(
+            level_three_orbit_camera(4.0 / 3.0).target,
+            LEVEL_THREE_PLANET_CENTER
+        );
     }
 
     #[test]

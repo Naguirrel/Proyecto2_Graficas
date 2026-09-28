@@ -76,7 +76,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             )?;
         }
 
-        let mouse_orbit_delta = mouse_orbit_delta(&rl);
+        let mouse_orbit_delta = mouse_orbit_delta(&rl, scene_state);
         if orbit_camera.update(read_camera_input(&rl, mouse_orbit_delta), delta_seconds) {
             camera = orbit_camera.to_camera();
             render_state.mark_camera_changed(now);
@@ -232,13 +232,20 @@ fn read_camera_input(rl: &RaylibHandle, mouse_orbit_delta: (f32, f32)) -> Camera
     }
 }
 
-fn mouse_orbit_delta(rl: &RaylibHandle) -> (f32, f32) {
-    if !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT) {
+fn mouse_orbit_delta(rl: &RaylibHandle, scene_state: SceneState) -> (f32, f32) {
+    if !rl.is_mouse_button_down(orbit_drag_button(scene_state)) {
         return (0.0, 0.0);
     }
 
     let delta = rl.get_mouse_delta();
     (delta.x, delta.y)
+}
+
+fn orbit_drag_button(scene_state: SceneState) -> MouseButton {
+    match scene_state {
+        SceneState::Galaxy => MouseButton::MOUSE_BUTTON_RIGHT,
+        SceneState::Planet(_) => MouseButton::MOUSE_BUTTON_LEFT,
+    }
 }
 
 fn print_controls() {
@@ -1077,8 +1084,8 @@ fn draw_controls_overlay(drawing: &mut RaylibDrawHandle<'_>, panel_width: i32) {
 
 fn controls_lines() -> [&'static str; 5] {
     [
-        "Click izq: seleccionar",
-        "Click der + mover: rotar",
+        "Click izq: seleccionar / rotar nivel",
+        "Click der + mover: rotar menu",
         "Rueda: zoom",
         "Backspace: regresar",
         "Esc: salir",
@@ -1130,10 +1137,10 @@ mod tests {
     use super::{
         FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, RenderQuality, Viewport,
         build_planet_scene, controls_lines, interactive_dimensions, level_ui_metadata,
-        mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel, pick_selector_world,
-        project_world_to_pixel, render_dimensions_for, render_viewport, return_to_selector,
-        scene_state_label, selector_level_ui_metadata, selector_planet_under_mouse,
-        write_framebuffer_rgba,
+        mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel, orbit_drag_button,
+        pick_selector_world, project_world_to_pixel, render_dimensions_for, render_viewport,
+        return_to_selector, scene_state_label, selector_level_ui_metadata,
+        selector_planet_under_mouse, write_framebuffer_rgba,
     };
     use crate::{
         camera::{Camera, CameraInput, OrbitCamera},
@@ -1144,7 +1151,7 @@ mod tests {
         ray::Ray,
         space::{self, PlanetType, SceneState, SelectorWorld, galaxy_selector_worlds},
     };
-    use raylib::prelude::Vector2;
+    use raylib::prelude::{MouseButton, Vector2};
     use std::time::{Duration, Instant};
 
     const EPSILON: f32 = 0.0001;
@@ -1581,12 +1588,24 @@ mod tests {
         assert_eq!(
             controls_lines(),
             [
-                "Click izq: seleccionar",
-                "Click der + mover: rotar",
+                "Click izq: seleccionar / rotar nivel",
+                "Click der + mover: rotar menu",
                 "Rueda: zoom",
                 "Backspace: regresar",
                 "Esc: salir",
             ]
+        );
+    }
+
+    #[test]
+    fn mouse_orbit_button_matches_menu_and_level_modes() {
+        assert_eq!(
+            orbit_drag_button(SceneState::Galaxy),
+            MouseButton::MOUSE_BUTTON_RIGHT
+        );
+        assert_eq!(
+            orbit_drag_button(SceneState::Planet(PlanetType::BlueMoon)),
+            MouseButton::MOUSE_BUTTON_LEFT
         );
     }
 
