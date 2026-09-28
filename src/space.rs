@@ -423,7 +423,7 @@ fn space_skybox_texture() -> Result<Texture, TextureError> {
         let v = 1.0 - y as f32 / (SPACE_SKYBOX_HEIGHT - 1) as f32;
 
         for x in 0..SPACE_SKYBOX_WIDTH {
-            let u = x as f32 / SPACE_SKYBOX_WIDTH as f32;
+            let u = x as f32 / (SPACE_SKYBOX_WIDTH - 1) as f32;
             pixels.push(space_skybox_color(u, v));
         }
     }
@@ -432,11 +432,13 @@ fn space_skybox_texture() -> Result<Texture, TextureError> {
 }
 
 fn space_skybox_color(u: f32, v: f32) -> Color {
+    let u = u.rem_euclid(1.0);
     let bottom = Color::new(0.010, 0.045, 0.130);
     let top = Color::new(0.020, 0.095, 0.230);
     let lateral = Color::new(0.012, 0.070, 0.190);
+    let lateral_mix = smoothstep(0.0, 1.0, 0.5 + 0.5 * (u * std::f32::consts::TAU).cos());
     let mut color = bottom.lerp(top, smoothstep(0.0, 1.0, v));
-    color = color.lerp(lateral, smoothstep(0.0, 1.0, 1.0 - u) * 0.26);
+    color = color.lerp(lateral, lateral_mix * 0.20);
 
     color = add_cartoon_cloud_layers(color, u, v);
 
@@ -483,16 +485,14 @@ fn add_cartoon_sun(color: Color, u: f32, v: f32, sun_distance: f32) -> Color {
 }
 
 fn add_cartoon_cloud_layers(color: Color, u: f32, v: f32) -> Color {
-    let lower_back = cloud_band(u, v, 0.220, 0.070, 0.038, 2.8, 0.25);
+    let lower_back = cloud_band(u, v, 0.220, 0.070, 0.038, 3.0, 0.25);
     let lower_front = cloud_band(u, v, 0.120, 0.052, 0.030, 4.0, 1.10);
-    let left_side = side_cloud(u, v, 0.045, 0.55, 0.055, 5.2);
-    let right_side = side_cloud(1.0 - u, v, 0.018, 0.45, 0.045, 3.5);
+    let side = side_cloud(u.min(1.0 - u), v, 0.042, 0.52, 0.052, 4.6);
 
     let color = color.lerp(Color::new(0.030, 0.145, 0.295), lower_back * 0.52);
     let color = color.lerp(Color::new(0.020, 0.098, 0.245), lower_front * 0.68);
-    let color = color.lerp(Color::new(0.020, 0.120, 0.290), left_side * 0.48);
 
-    color.lerp(Color::new(0.014, 0.080, 0.210), right_side * 0.40)
+    color.lerp(Color::new(0.017, 0.096, 0.245), side * 0.44)
 }
 
 fn cloud_band(
@@ -505,7 +505,7 @@ fn cloud_band(
     phase: f32,
 ) -> f32 {
     let wave = (u * frequency * std::f32::consts::TAU + phase).sin() * height
-        + (u * (frequency * 1.8) * std::f32::consts::TAU + phase * 0.7).sin() * height * 0.45;
+        + (u * (frequency * 2.0) * std::f32::consts::TAU + phase * 0.7).sin() * height * 0.45;
     let top_edge = base_v + wave;
 
     1.0 - smoothstep(top_edge - softness, top_edge + softness, v)
@@ -1918,9 +1918,22 @@ mod tests {
         let base = space_skybox_color(0.52, 0.52);
         let horizontal_neighbor = space_skybox_color(0.521, 0.52);
         let vertical_neighbor = space_skybox_color(0.52, 0.521);
+        let left_seam = space_skybox_color(0.001, 0.52);
+        let right_seam = space_skybox_color(0.999, 0.52);
 
         assert!(color_delta(base, horizontal_neighbor) < 0.015);
         assert!(color_delta(base, vertical_neighbor) < 0.015);
+        assert!(color_delta(left_seam, right_seam) < 0.015);
+    }
+
+    #[test]
+    fn generated_space_skybox_wraps_without_visible_vertical_seam() {
+        let texture = space_skybox_texture().unwrap();
+        let middle_y = texture.height() / 2;
+        let left_edge = texture.pixel(0, middle_y).unwrap();
+        let right_edge = texture.pixel(texture.width() - 1, middle_y).unwrap();
+
+        assert!(color_delta(left_edge, right_edge) < 0.001);
     }
 
     #[test]
