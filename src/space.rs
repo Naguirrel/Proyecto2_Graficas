@@ -20,15 +20,11 @@ pub const BLUE_MOON_WINDOW_TITLE: &str = "Angry Birds Space Diorama - Luna Azul"
 pub const SPACE_WORLDS_WINDOW_TITLE: &str = "Angry Birds Space Diorama - Worlds";
 pub const BLUE_MOON_PLANET_CENTER: Vec3 = Vec3::new(0.0, 0.0, 0.0);
 pub const BLUE_MOON_PLANET_RADIUS: f32 = 1.25;
-pub const LAUNCH_ASTEROID_CENTER: Vec3 = Vec3::new(-1.42, 1.02, 0.66);
-pub const LAUNCH_ASTEROID_RADIUS: f32 = 0.62;
 pub const COOKIE_PLANET_CENTER: Vec3 = Vec3::new(4.45, -0.30, -0.25);
 pub const COOKIE_PLANET_RADIUS: f32 = 1.45;
 pub const LEVEL_THREE_PLANET_CENTER: Vec3 = Vec3::new(-0.35, 0.05, 0.10);
 pub const LEVEL_THREE_PLANET_RADIUS: f32 = 1.70;
 pub const SPACE_SUN_DIRECTION: Vec3 = Vec3::new(-0.76, 0.54, -0.36);
-pub const BLUE_MOON_PIG_COUNT: usize = 5;
-pub const BLUE_MOON_BIRD_COUNT: usize = 3;
 pub const COOKIE_LEVEL_PIG_COUNT: usize = 2;
 pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-2.85, 0.26, 0.0);
 pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 0.98;
@@ -125,19 +121,11 @@ struct SpaceMaterials {
     snout: usize,
     eye: usize,
     pupil: usize,
-    red_bird: usize,
-    blue_bird: usize,
-    yellow_bird: usize,
-    beak: usize,
-    slingshot: usize,
-    purple_trail: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct SpaceSceneMetadata {
     pub planet_id: Option<usize>,
-    pub gravity_field_id: Option<usize>,
-    pub launch_asteroid_id: Option<usize>,
     pub cookie_planet_id: Option<usize>,
     pub cookie_gravity_field_id: Option<usize>,
     pub level_three_planet_id: Option<usize>,
@@ -148,12 +136,9 @@ pub(crate) struct SpaceSceneMetadata {
     pub candy_count: usize,
     pub pig_count: usize,
     pub cookie_pig_count: usize,
-    pub bird_count: usize,
-    pub slingshot_parts: usize,
     pub wood_parts: usize,
     pub ice_or_metal_parts: usize,
     pub tnt_parts: usize,
-    pub trajectory_trail_parts: usize,
 }
 
 impl fmt::Display for SpaceBuildError {
@@ -704,11 +689,6 @@ fn add_blue_moon_world(
     materials: SpaceMaterials,
 ) -> Result<(), SpaceBuildError> {
     add_planet(scene, metadata, materials)?;
-    add_enemy_construction(scene, metadata, materials)?;
-    add_pigs(scene, metadata, materials)?;
-    add_launcher(scene, metadata, materials)?;
-    add_blue_moon_debris(scene, metadata, materials)?;
-    add_gravity_field(scene, metadata, materials)?;
 
     Ok(())
 }
@@ -910,60 +890,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
     ))?;
     let eye = scene.add_material(Material::diffuse(Color::WHITE))?;
     let pupil = scene.add_material(Material::diffuse(Color::BLACK))?;
-    let red_bird = scene.add_material(Material::new(
-        Color::new(0.92, 0.08, 0.06),
-        0.28,
-        28.0,
-        0.02,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let blue_bird = scene.add_material(Material::new(
-        Color::new(0.08, 0.42, 0.95),
-        0.26,
-        28.0,
-        0.02,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let yellow_bird = scene.add_material(Material::new(
-        Color::new(1.0, 0.82, 0.08),
-        0.24,
-        22.0,
-        0.02,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let beak = scene.add_material(Material::new(
-        Color::new(1.0, 0.58, 0.05),
-        0.18,
-        18.0,
-        0.0,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let slingshot = scene.add_material(Material::new(
-        Color::new(0.36, 0.19, 0.08),
-        0.22,
-        18.0,
-        0.01,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let purple_trail = scene.add_material(Material::new(
-        Color::new(0.72, 0.10, 1.0),
-        0.20,
-        34.0,
-        0.05,
-        0.42,
-        1.05,
-        Color::new(0.20, 0.02, 0.34),
-    ))?;
 
     Ok(SpaceMaterials {
         moon,
@@ -989,12 +915,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         snout,
         eye,
         pupil,
-        red_bird,
-        blue_bird,
-        yellow_bird,
-        beak,
-        slingshot,
-        purple_trail,
     })
 }
 
@@ -1049,300 +969,6 @@ fn add_planet(
         )?;
         metadata.crater_count += 1;
     }
-
-    Ok(())
-}
-
-fn add_enemy_construction(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    let frame = main_moon_frame()?;
-
-    for (center, half_extents) in [
-        (
-            front_local(-0.86, 0.18, -1.30),
-            Vec3::new(0.58, 0.055, 0.055),
-        ),
-        (
-            front_local(-0.86, 0.18, -0.82),
-            Vec3::new(0.56, 0.055, 0.055),
-        ),
-        (
-            front_local(-1.36, 0.16, -1.06),
-            Vec3::new(0.055, 0.055, 0.36),
-        ),
-        (
-            front_local(-0.38, 0.16, -1.06),
-            Vec3::new(0.055, 0.055, 0.36),
-        ),
-        (
-            front_local(-0.86, 0.16, -1.56),
-            Vec3::new(0.36, 0.050, 0.050),
-        ),
-        (
-            front_local(-0.50, 0.16, -0.58),
-            Vec3::new(0.45, 0.050, 0.050),
-        ),
-        (front_local(0.66, 0.18, 0.66), Vec3::new(0.55, 0.055, 0.055)),
-        (front_local(0.82, 0.16, 1.04), Vec3::new(0.055, 0.055, 0.44)),
-        (front_local(0.34, 0.16, 0.70), Vec3::new(0.055, 0.055, 0.38)),
-        (
-            front_local(1.55, 0.18, -0.46),
-            Vec3::new(1.08, 0.055, 0.055),
-        ),
-        (
-            front_local(1.58, 0.18, -0.82),
-            Vec3::new(1.00, 0.050, 0.050),
-        ),
-        (
-            front_local(0.78, 0.16, -0.64),
-            Vec3::new(0.055, 0.055, 0.30),
-        ),
-        (
-            front_local(1.28, 0.16, -0.64),
-            Vec3::new(0.055, 0.055, 0.30),
-        ),
-        (
-            front_local(1.80, 0.16, -0.64),
-            Vec3::new(0.055, 0.055, 0.30),
-        ),
-        (
-            front_local(2.35, 0.16, -0.66),
-            Vec3::new(0.055, 0.055, 0.28),
-        ),
-        (
-            front_local(2.70, 0.16, -0.73),
-            Vec3::new(0.42, 0.045, 0.045),
-        ),
-        (
-            front_local(-1.28, 0.16, -0.36),
-            Vec3::new(0.055, 0.055, 0.34),
-        ),
-        (
-            front_local(-0.84, 0.16, -0.24),
-            Vec3::new(0.44, 0.050, 0.050),
-        ),
-    ] {
-        add_radial_box(scene, frame, center, half_extents, materials.wood)?;
-        metadata.wood_parts += 1;
-    }
-
-    for (center, half_extents, material_id) in [
-        (
-            front_local(0.62, 0.34, 1.28),
-            Vec3::new(0.20, 0.18, 0.18),
-            materials.ice,
-        ),
-        (
-            front_local(0.86, 0.34, 1.62),
-            Vec3::new(0.18, 0.18, 0.16),
-            materials.ice,
-        ),
-        (
-            front_local(1.08, 0.34, 1.92),
-            Vec3::new(0.16, 0.16, 0.15),
-            materials.metal,
-        ),
-        (
-            front_local(-0.82, 0.34, -0.76),
-            Vec3::new(0.18, 0.16, 0.17),
-            materials.ice,
-        ),
-        (
-            front_local(1.06, 0.34, -0.46),
-            Vec3::new(0.18, 0.16, 0.16),
-            materials.ice,
-        ),
-        (
-            front_local(1.46, 0.34, -0.46),
-            Vec3::new(0.18, 0.16, 0.16),
-            materials.metal,
-        ),
-        (
-            front_local(1.86, 0.34, -0.46),
-            Vec3::new(0.16, 0.14, 0.14),
-            materials.metal,
-        ),
-    ] {
-        add_radial_box(scene, frame, center, half_extents, material_id)?;
-        metadata.ice_or_metal_parts += 1;
-    }
-
-    add_radial_box(
-        scene,
-        frame,
-        front_local(-0.22, 0.32, -0.56),
-        Vec3::new(0.18, 0.18, 0.18),
-        materials.tnt,
-    )?;
-    metadata.tnt_parts += 1;
-
-    add_radial_box(
-        scene,
-        frame,
-        front_local(0.18, 0.32, -0.56),
-        Vec3::new(0.14, 0.14, 0.14),
-        materials.tnt,
-    )?;
-    metadata.tnt_parts += 1;
-
-    Ok(())
-}
-
-fn add_pigs(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    let frame = main_moon_frame()?;
-
-    for (local_center, radius) in [
-        (front_local(-0.86, 0.45, -0.66), 0.17),
-        (front_local(-0.58, 0.45, -1.66), 0.17),
-        (front_local(0.04, 0.45, -0.54), 0.17),
-        (front_local(0.66, 0.45, 0.04), 0.16),
-        (front_local(0.70, 0.45, 1.30), 0.15),
-    ] {
-        add_space_pig_at(scene, frame, local_center, radius, materials)?;
-    }
-    metadata.pig_count = BLUE_MOON_PIG_COUNT;
-
-    Ok(())
-}
-
-fn add_launcher(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    let asteroid_id = scene.object_count();
-    scene.add_sphere(Sphere::new(
-        LAUNCH_ASTEROID_CENTER,
-        LAUNCH_ASTEROID_RADIUS,
-        materials.asteroid,
-    )?)?;
-    metadata.launch_asteroid_id = Some(asteroid_id);
-
-    let frame = RadialFrame::from_normal(
-        LAUNCH_ASTEROID_CENTER,
-        LAUNCH_ASTEROID_RADIUS,
-        Vec3::new(0.0, 0.35, 1.0),
-    )?;
-
-    for local in [
-        Vec3::new(-0.28, 0.020, -0.08),
-        Vec3::new(0.18, 0.025, 0.18),
-        Vec3::new(0.35, 0.020, -0.24),
-    ] {
-        add_radial_cylinder(scene, frame, local, 0.09, 0.018, materials.crater)?;
-    }
-
-    add_slingshot(scene, frame, metadata, materials)?;
-    add_asteroid_plants(scene, frame, materials)?;
-    add_launch_trail(scene, metadata, materials)?;
-    add_space_bird(
-        scene,
-        frame,
-        Vec3::new(-0.03, 0.83, -0.03),
-        0.17,
-        materials.red_bird,
-        materials,
-    )?;
-    add_space_bird(
-        scene,
-        frame,
-        Vec3::new(-0.42, 0.20, 0.25),
-        0.15,
-        materials.blue_bird,
-        materials,
-    )?;
-    add_space_bird(
-        scene,
-        frame,
-        Vec3::new(-0.64, 0.18, -0.18),
-        0.16,
-        materials.yellow_bird,
-        materials,
-    )?;
-    metadata.bird_count = BLUE_MOON_BIRD_COUNT;
-
-    Ok(())
-}
-
-fn add_asteroid_plants(
-    scene: &mut Scene,
-    frame: RadialFrame,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    for local in [
-        Vec3::new(0.26, 0.54, 0.24),
-        Vec3::new(0.44, 0.46, 0.06),
-        Vec3::new(0.14, 0.44, -0.24),
-    ] {
-        scene.add_cone(Cone::new(
-            frame.local_to_world(local),
-            0.055,
-            0.12,
-            frame.basis(),
-            materials.pig,
-        )?)?;
-    }
-
-    Ok(())
-}
-
-fn add_launch_trail(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    for (center, radius) in [
-        (Vec3::new(-2.35, 0.86, 0.88), 0.060),
-        (Vec3::new(-2.62, 0.56, 0.92), 0.052),
-        (Vec3::new(-2.84, 0.22, 0.96), 0.044),
-        (Vec3::new(-3.02, -0.12, 1.00), 0.036),
-    ] {
-        scene.add_sphere(Sphere::new(center, radius, materials.purple_trail)?)?;
-        metadata.trajectory_trail_parts += 1;
-    }
-
-    Ok(())
-}
-
-fn add_blue_moon_debris(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    for (center, radius, material_id) in [
-        (Vec3::new(-2.85, 1.55, -0.85), 0.13, materials.asteroid),
-        (Vec3::new(-3.15, -0.85, -1.35), 0.10, materials.asteroid),
-        (Vec3::new(-1.85, 2.10, 1.15), 0.09, materials.crater),
-        (Vec3::new(1.35, 1.80, -1.95), 0.11, materials.asteroid),
-        (Vec3::new(2.55, -0.80, 1.50), 0.12, materials.asteroid),
-        (Vec3::new(-2.35, -1.65, 1.65), 0.08, materials.crater),
-    ] {
-        scene.add_sphere(Sphere::new(center, radius, material_id)?)?;
-        metadata.decorative_asteroid_count += 1;
-    }
-
-    Ok(())
-}
-
-fn add_gravity_field(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    let gravity_id = scene.object_count();
-    scene.add_sphere(Sphere::new(
-        BLUE_MOON_PLANET_CENTER,
-        BLUE_MOON_PLANET_RADIUS * 2.74,
-        materials.gravity_field,
-    )?)?;
-    metadata.gravity_field_id = Some(gravity_id);
 
     Ok(())
 }
@@ -1754,94 +1380,6 @@ fn add_space_pig_at(
     Ok(())
 }
 
-fn add_slingshot(
-    scene: &mut Scene,
-    frame: RadialFrame,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    add_radial_box(
-        scene,
-        frame,
-        Vec3::new(0.0, 0.08, -0.03),
-        Vec3::new(0.36, 0.08, 0.12),
-        materials.slingshot,
-    )?;
-    metadata.slingshot_parts += 1;
-
-    for x in [-0.18, 0.18] {
-        add_radial_cylinder(
-            scene,
-            frame,
-            Vec3::new(x, 0.42, 0.0),
-            0.055,
-            0.38,
-            materials.slingshot,
-        )?;
-        metadata.slingshot_parts += 1;
-
-        scene.add_sphere(Sphere::new(
-            frame.position(x, 0.82, 0.0),
-            0.075,
-            materials.slingshot,
-        )?)?;
-        metadata.slingshot_parts += 1;
-    }
-
-    add_radial_box(
-        scene,
-        frame,
-        Vec3::new(0.0, 0.80, 0.0),
-        Vec3::new(0.24, 0.03, 0.04),
-        materials.slingshot,
-    )?;
-    metadata.slingshot_parts += 1;
-
-    for (center, half_extents) in [
-        (Vec3::new(-0.30, 0.31, -0.02), Vec3::new(0.05, 0.22, 0.04)),
-        (Vec3::new(0.30, 0.31, -0.02), Vec3::new(0.05, 0.22, 0.04)),
-        (Vec3::new(0.0, 0.74, 0.08), Vec3::new(0.30, 0.022, 0.025)),
-    ] {
-        add_radial_box(scene, frame, center, half_extents, materials.slingshot)?;
-        metadata.slingshot_parts += 1;
-    }
-
-    Ok(())
-}
-
-fn add_space_bird(
-    scene: &mut Scene,
-    frame: RadialFrame,
-    local_center: Vec3,
-    radius: f32,
-    body_material: usize,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    scene.add_sphere(Sphere::new(
-        frame.local_to_world(local_center),
-        radius,
-        body_material,
-    )?)?;
-
-    for eye_x in [-radius * 0.28, radius * 0.28] {
-        scene.add_sphere(Sphere::new(
-            frame.local_to_world(local_center + Vec3::new(eye_x, radius * 0.78, radius * 0.28)),
-            radius * 0.13,
-            materials.eye,
-        )?)?;
-    }
-
-    scene.add_cone(Cone::new(
-        frame.local_to_world(local_center + Vec3::new(0.0, radius * 1.05, 0.0)),
-        radius * 0.18,
-        radius * 0.24,
-        frame.basis(),
-        materials.beak,
-    )?)?;
-
-    Ok(())
-}
-
 fn add_radial_box(
     scene: &mut Scene,
     frame: RadialFrame,
@@ -1878,18 +1416,6 @@ fn add_radial_cylinder(
     Ok(())
 }
 
-fn main_moon_frame() -> Result<RadialFrame, SpaceBuildError> {
-    Ok(RadialFrame::from_normal(
-        BLUE_MOON_PLANET_CENTER,
-        BLUE_MOON_PLANET_RADIUS,
-        Vec3::new(0.0, 0.0, 1.0),
-    )?)
-}
-
-fn front_local(screen_x: f32, radial_y: f32, screen_y: f32) -> Vec3 {
-    Vec3::new(-screen_x, radial_y, screen_y)
-}
-
 fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
     Ok(RadialFrame::from_latitude_longitude(
         COOKIE_PLANET_CENTER,
@@ -1902,19 +1428,19 @@ fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BLUE_MOON_BIRD_COUNT, BLUE_MOON_PIG_COUNT, BLUE_MOON_PLANET_CENTER,
-        BLUE_MOON_PLANET_RADIUS, COOKIE_LEVEL_PIG_COUNT, COOKIE_PLANET_CENTER,
-        COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
-        GALAXY_SELECTOR_LEVEL_THREE_CENTER, LAUNCH_ASTEROID_CENTER, LEVEL_THREE_PLANET_CENTER,
-        LEVEL_THREE_PLANET_RADIUS, PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V,
-        SPACE_SUN_DIRECTION, SPACE_SUN_U, SPACE_SUN_V, SceneState, SpaceMaterials, add_radial_box,
-        blue_moon_orbit_camera, blue_moon_skybox, build_blue_moon_scene_with_metadata,
-        build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
-        build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
-        cookie_world_orbit_camera, cookie_world_skybox, galaxy_selector_orbit_camera,
-        galaxy_selector_worlds, level_three_orbit_camera, level_three_skybox, main_moon_frame,
-        register_space_materials, space_levels_orbit_camera, space_menu_skybox, space_skybox_color,
-        space_skybox_texture, sun_light_position, wrapped_uv_distance,
+        BLUE_MOON_PLANET_CENTER, BLUE_MOON_PLANET_RADIUS, COOKIE_LEVEL_PIG_COUNT,
+        COOKIE_PLANET_CENTER, COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER,
+        GALAXY_SELECTOR_COOKIE_CENTER, GALAXY_SELECTOR_LEVEL_THREE_CENTER,
+        LEVEL_THREE_PLANET_CENTER, LEVEL_THREE_PLANET_RADIUS, PlanetType, SKYBOX_ASTEROID_A_U,
+        SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U, SPACE_SUN_V, SceneState,
+        SpaceMaterials, add_radial_box, blue_moon_orbit_camera, blue_moon_skybox,
+        build_blue_moon_scene_with_metadata, build_cookie_world_scene_with_metadata,
+        build_galaxy_selector_scene, build_level_three_scene_with_metadata,
+        build_space_levels_scene_with_metadata, cookie_level_frame, cookie_world_orbit_camera,
+        cookie_world_skybox, galaxy_selector_orbit_camera, galaxy_selector_worlds,
+        level_three_orbit_camera, level_three_skybox, register_space_materials,
+        space_levels_orbit_camera, space_menu_skybox, space_skybox_color, space_skybox_texture,
+        sun_light_position, wrapped_uv_distance,
     };
     use crate::{color::Color, material::Material, math::Vec3, ray::Ray, scene::Scene};
 
@@ -1929,8 +1455,8 @@ mod tests {
         assert!(scene.object_count() > 0);
         assert!(scene.object_count() < 180);
         assert!(metadata.planet_id.is_some());
-        assert!(metadata.gravity_field_id.is_some());
-        assert!(metadata.launch_asteroid_id.is_some());
+        assert!(metadata.cookie_planet_id.is_none());
+        assert_eq!(metadata.pig_count, 0);
     }
 
     #[test]
@@ -2158,38 +1684,30 @@ mod tests {
     fn blue_moon_scene_contains_required_counts() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
 
-        assert_eq!(metadata.pig_count, BLUE_MOON_PIG_COUNT);
-        assert_eq!(metadata.bird_count, BLUE_MOON_BIRD_COUNT);
+        assert_eq!(metadata.pig_count, 0);
         assert!(metadata.crater_count >= 10);
-        assert!(metadata.decorative_asteroid_count >= 5);
-        assert!(metadata.slingshot_parts >= 3);
-        assert!(metadata.wood_parts >= 16);
-        assert!(metadata.ice_or_metal_parts >= 7);
-        assert!(metadata.tnt_parts >= 1);
-        assert_eq!(metadata.trajectory_trail_parts, 4);
-        assert!(scene.sphere_count() >= 34);
-        assert!(scene.cylinder_count() >= 19);
-        assert!(scene.cone_count() >= 14);
-        assert!(scene.oriented_box_count() >= 25);
+        assert_eq!(metadata.decorative_asteroid_count, 0);
+        assert_eq!(metadata.wood_parts, 0);
+        assert_eq!(metadata.ice_or_metal_parts, 0);
+        assert_eq!(metadata.tnt_parts, 0);
+        assert_eq!(scene.sphere_count(), 1);
+        assert_eq!(scene.cylinder_count(), metadata.crater_count);
+        assert_eq!(scene.cone_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
     }
 
     #[test]
-    fn blue_moon_scene_matches_first_level_reference_beats() {
+    fn blue_moon_scene_is_clean_for_manual_layout_pass() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
-        let trail_material = scene
-            .materials()
-            .iter()
-            .filter(|material| {
-                material.emission.b > 0.30 && material.albedo.r > 0.60 && material.albedo.g < 0.20
-            })
-            .count();
 
-        assert_eq!(metadata.pig_count, 5);
-        assert_eq!(metadata.trajectory_trail_parts, 4);
-        assert_eq!(trail_material, 1);
-        assert!(metadata.launch_asteroid_id.is_some());
-        assert!(metadata.gravity_field_id.is_some());
-        assert!(metadata.wood_parts > metadata.ice_or_metal_parts);
+        assert!(metadata.planet_id.is_some());
+        assert!(metadata.cookie_planet_id.is_none());
+        assert_eq!(metadata.pig_count, 0);
+        assert_eq!(
+            scene.object_count(),
+            1 + metadata.crater_count,
+            "the blue moon level should contain only the planet body and its surface craters"
+        );
     }
 
     #[test]
@@ -2223,35 +1741,15 @@ mod tests {
     }
 
     #[test]
-    fn planet_and_gravity_field_are_spheres() {
+    fn blue_moon_planet_is_the_only_sphere() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
         let planet = scene.objects()[metadata.planet_id.unwrap()]
-            .as_sphere()
-            .unwrap();
-        let gravity = scene.objects()[metadata.gravity_field_id.unwrap()]
             .as_sphere()
             .unwrap();
 
         assert_eq!(planet.center(), BLUE_MOON_PLANET_CENTER);
         assert_eq!(planet.radius(), BLUE_MOON_PLANET_RADIUS);
-        assert_eq!(gravity.center(), BLUE_MOON_PLANET_CENTER);
-        assert!(gravity.radius() > planet.radius());
-
-        let material = scene.material(gravity.material_id()).unwrap();
-        assert!(material.transparency > 0.94);
-        assert!(material.reflectivity < 0.04);
-        assert!(material.emission.b > 0.10);
-    }
-
-    #[test]
-    fn launch_asteroid_is_independent_and_visible_beside_planet() {
-        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
-        let asteroid = scene.objects()[metadata.launch_asteroid_id.unwrap()]
-            .as_sphere()
-            .unwrap();
-
-        assert_eq!(asteroid.center(), LAUNCH_ASTEROID_CENTER);
-        assert!(asteroid.center().x < BLUE_MOON_PLANET_CENTER.x - BLUE_MOON_PLANET_RADIUS);
+        assert_eq!(scene.sphere_count(), 1);
     }
 
     #[test]
@@ -2262,14 +1760,14 @@ mod tests {
         scene
             .add_material(Material::diffuse(crate::color::Color::WHITE))
             .unwrap();
-        let frame = main_moon_frame().unwrap();
+        let frame = cookie_level_frame().unwrap();
         let half_extents = Vec3::new(0.1, 0.2, 0.1);
         let local_center = Vec3::new(0.0, half_extents.y + 0.05, 0.0);
 
         add_radial_box(&mut scene, frame, local_center, half_extents, 0).unwrap();
 
         let box_center = scene.objects()[0].as_oriented_box().unwrap().center();
-        assert!((box_center - BLUE_MOON_PLANET_CENTER).length() > BLUE_MOON_PLANET_RADIUS);
+        assert!((box_center - COOKIE_PLANET_CENTER).length() > COOKIE_PLANET_RADIUS);
         assert!(wood < material_scene.materials().len());
     }
 
@@ -2314,7 +1812,6 @@ mod tests {
         assert_eq!(moon.radius(), BLUE_MOON_PLANET_RADIUS);
         assert_eq!(cookie.center(), COOKIE_PLANET_CENTER);
         assert_eq!(cookie.radius(), COOKIE_PLANET_RADIUS);
-        assert!(metadata.gravity_field_id.is_some());
         assert!(metadata.cookie_gravity_field_id.is_some());
     }
 
@@ -2336,7 +1833,6 @@ mod tests {
         assert!(metadata.tnt_parts >= 1);
         assert!(metadata.cookie_gravity_field_id.is_some());
         assert!(metadata.planet_id.is_none());
-        assert!(metadata.launch_asteroid_id.is_none());
         assert!(scene.skybox().is_some());
     }
 
@@ -2375,17 +1871,11 @@ mod tests {
     }
 
     #[test]
-    fn space_levels_scene_keeps_pigs_birds_and_launcher() {
+    fn space_levels_scene_keeps_cookie_pigs_while_blue_moon_is_clean() {
         let (_, metadata) = build_space_levels_scene_with_metadata().unwrap();
 
-        assert_eq!(metadata.bird_count, BLUE_MOON_BIRD_COUNT);
         assert_eq!(metadata.cookie_pig_count, COOKIE_LEVEL_PIG_COUNT);
-        assert_eq!(
-            metadata.pig_count,
-            BLUE_MOON_PIG_COUNT + COOKIE_LEVEL_PIG_COUNT
-        );
-        assert!(metadata.launch_asteroid_id.is_some());
-        assert!(metadata.slingshot_parts >= 7);
+        assert_eq!(metadata.pig_count, COOKIE_LEVEL_PIG_COUNT);
     }
 
     #[test]
@@ -2394,9 +1884,9 @@ mod tests {
 
         assert!(metadata.cookie_chocolate_chip_count >= 8);
         assert!(metadata.candy_count >= 6);
-        assert!(scene.sphere_count() >= 35);
+        assert!(scene.sphere_count() >= 16);
         assert!(scene.cylinder_count() >= 28);
-        assert!(scene.oriented_box_count() >= 26);
+        assert!(scene.oriented_box_count() >= 7);
     }
 
     #[test]
@@ -2405,7 +1895,7 @@ mod tests {
 
         assert!(scene.skybox().is_some());
         assert!(scene.lights().len() >= 7);
-        assert!(scene.object_count() >= 125);
+        assert!(scene.object_count() >= 60);
         assert!(scene.object_count() < 260);
 
         for primitive in scene.objects() {
@@ -2437,7 +1927,7 @@ mod tests {
     fn space_levels_initial_camera_is_outside_and_sees_a_world() {
         let (scene, _) = build_space_levels_scene_with_metadata().unwrap();
         let camera = space_levels_orbit_camera(4.0 / 3.0).to_camera();
-        let central_ray = Ray::new(camera.position, camera.target - camera.position);
+        let central_ray = Ray::new(camera.position, COOKIE_PLANET_CENTER - camera.position);
         let hit = scene.intersect(&central_ray, 0.001, 100.0).unwrap();
 
         assert!(
