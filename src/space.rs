@@ -1,6 +1,7 @@
 use std::{error::Error, fmt};
 
 use crate::{
+    basis::{Basis3, Basis3Error},
     camera::OrbitCamera,
     color::Color,
     cone::{Cone, ConeError},
@@ -25,6 +26,7 @@ pub const COOKIE_PLANET_RADIUS: f32 = 1.45;
 pub const LEVEL_THREE_PLANET_CENTER: Vec3 = Vec3::new(-0.35, 0.05, 0.10);
 pub const LEVEL_THREE_PLANET_RADIUS: f32 = 1.70;
 pub const SPACE_SUN_DIRECTION: Vec3 = Vec3::new(-0.76, 0.54, -0.36);
+pub const BLUE_MOON_LEVEL_PIG_COUNT: usize = 3;
 pub const COOKIE_LEVEL_PIG_COUNT: usize = 2;
 pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-2.85, 0.26, 0.0);
 pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 0.98;
@@ -85,6 +87,7 @@ pub enum SpaceBuildError {
     Cone(ConeError),
     OrientedBox(OrientedBoxError),
     RadialFrame(RadialFrameError),
+    Basis(Basis3Error),
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -127,6 +130,8 @@ pub(crate) struct SpaceSceneMetadata {
     pub blue_moon_crater_count: usize,
     pub blue_moon_stone_count: usize,
     pub blue_moon_dirt_base_parts: usize,
+    pub blue_moon_stone_structure_parts: usize,
+    pub blue_moon_pig_count: usize,
     pub decorative_asteroid_count: usize,
     pub cookie_chocolate_chip_count: usize,
     pub candy_count: usize,
@@ -147,6 +152,7 @@ impl fmt::Display for SpaceBuildError {
             Self::Cone(error) => write!(formatter, "cone build error: {error:?}"),
             Self::OrientedBox(error) => write!(formatter, "oriented box build error: {error:?}"),
             Self::RadialFrame(error) => write!(formatter, "radial frame build error: {error:?}"),
+            Self::Basis(error) => write!(formatter, "basis build error: {error:?}"),
         }
     }
 }
@@ -192,6 +198,12 @@ impl From<OrientedBoxError> for SpaceBuildError {
 impl From<RadialFrameError> for SpaceBuildError {
     fn from(error: RadialFrameError) -> Self {
         Self::RadialFrame(error)
+    }
+}
+
+impl From<Basis3Error> for SpaceBuildError {
+    fn from(error: Basis3Error) -> Self {
+        Self::Basis(error)
     }
 }
 
@@ -1115,12 +1127,7 @@ fn add_blue_moon_wood_structure(
     metadata: &mut SpaceSceneMetadata,
     materials: SpaceMaterials,
 ) -> Result<(), SpaceBuildError> {
-    let frame = RadialFrame::from_latitude_longitude(
-        BLUE_MOON_PLANET_CENTER,
-        BLUE_MOON_PLANET_RADIUS,
-        0.40,
-        -0.18,
-    )?;
+    let frame = blue_moon_structure_frame()?;
 
     for (center, half_extents) in [
         (Vec3::new(0.00, 0.006, 0.00), Vec3::new(0.50, 0.072, 0.30)),
@@ -1151,6 +1158,52 @@ fn add_blue_moon_wood_structure(
     ] {
         add_radial_box(scene, frame, center, half_extents, materials.wood)?;
         metadata.wood_parts += 1;
+    }
+
+    for (center, half_extents) in [
+        (
+            Vec3::new(-0.02, 0.610, -0.08),
+            Vec3::new(0.300, 0.055, 0.055),
+        ),
+        (
+            Vec3::new(-0.24, 0.780, -0.08),
+            Vec3::new(0.055, 0.170, 0.055),
+        ),
+        (
+            Vec3::new(0.20, 0.790, -0.08),
+            Vec3::new(0.055, 0.180, 0.055),
+        ),
+        (
+            Vec3::new(-0.02, 0.975, -0.08),
+            Vec3::new(0.300, 0.055, 0.055),
+        ),
+        (
+            Vec3::new(-0.17, 1.170, -0.08),
+            Vec3::new(0.055, 0.170, 0.055),
+        ),
+        (
+            Vec3::new(0.13, 1.170, -0.08),
+            Vec3::new(0.055, 0.170, 0.055),
+        ),
+    ] {
+        add_radial_box(scene, frame, center, half_extents, materials.moon_stone)?;
+        metadata.blue_moon_stone_structure_parts += 1;
+    }
+
+    // Each pig rests on the top face of a structure part:
+    // (tangent_x, top of the supporting part, tangent_z, radius).
+    for (tangent_x, support_top, tangent_z, radius) in [
+        // Front wood beam: center y 0.165 + half height 0.040.
+        (-0.02, 0.205, 0.12, 0.105),
+        // First stone floor, between the stone pillars: 0.610 + 0.055.
+        (-0.02, 0.665, -0.08, 0.095),
+        // Second stone floor, between the top pillars: 0.975 + 0.055.
+        (-0.02, 1.030, -0.08, 0.085),
+    ] {
+        let center = Vec3::new(tangent_x, support_top + radius, tangent_z);
+        add_space_pig_at(scene, frame, center, radius, materials)?;
+        metadata.blue_moon_pig_count += 1;
+        metadata.pig_count += 1;
     }
 
     Ok(())
@@ -1524,35 +1577,37 @@ fn add_space_pig_at(
     radius: f32,
     materials: SpaceMaterials,
 ) -> Result<(), SpaceBuildError> {
+    // Pig local axes follow the frame: X is right, Y is radial (away from the
+    // ground) and Z is the direction the pig faces, parallel to the ground.
     scene.add_sphere(Sphere::new(
         frame.local_to_world(local_center),
         radius,
         materials.pig,
     )?)?;
     scene.add_cylinder(Cylinder::new(
-        frame.local_to_world(local_center + Vec3::new(0.0, radius * 0.76, -radius * 0.03)),
+        frame.local_to_world(local_center + Vec3::new(0.0, -radius * 0.03, radius * 0.76)),
         radius * 0.34,
         radius * 0.18,
-        frame.basis(),
+        facing_basis(frame)?,
         materials.snout,
     )?)?;
 
     for eye_x in [-radius * 0.34, radius * 0.34] {
         scene.add_sphere(Sphere::new(
-            frame.local_to_world(local_center + Vec3::new(eye_x, radius * 0.90, radius * 0.42)),
+            frame.local_to_world(local_center + Vec3::new(eye_x, radius * 0.42, radius * 0.90)),
             radius * 0.16,
             materials.eye,
         )?)?;
         scene.add_sphere(Sphere::new(
-            frame.local_to_world(local_center + Vec3::new(eye_x, radius * 1.04, radius * 0.42)),
+            frame.local_to_world(local_center + Vec3::new(eye_x, radius * 0.42, radius * 1.04)),
             radius * 0.07,
             materials.pupil,
         )?)?;
     }
 
-    for ear_x in [-radius * 0.48, radius * 0.48] {
+    for ear_x in [-radius * 0.44, radius * 0.44] {
         scene.add_cone(Cone::new(
-            frame.local_to_world(local_center + Vec3::new(ear_x, radius * 0.30, radius * 0.78)),
+            frame.local_to_world(local_center + Vec3::new(ear_x, radius * 0.88, 0.0)),
             radius * 0.14,
             radius * 0.18,
             frame.basis(),
@@ -1561,6 +1616,14 @@ fn add_space_pig_at(
     }
 
     Ok(())
+}
+
+/// Basis whose local Y axis points along the frame tangent Z, so cylinders and
+/// cones built with it lie parallel to the ground and point to the front.
+fn facing_basis(frame: RadialFrame) -> Result<Basis3, SpaceBuildError> {
+    let basis = frame.basis();
+
+    Ok(Basis3::new(basis.right(), basis.forward(), -basis.up())?)
 }
 
 fn add_radial_box(
@@ -1599,6 +1662,15 @@ fn add_radial_cylinder(
     Ok(())
 }
 
+fn blue_moon_structure_frame() -> Result<RadialFrame, SpaceBuildError> {
+    Ok(RadialFrame::from_latitude_longitude(
+        BLUE_MOON_PLANET_CENTER,
+        BLUE_MOON_PLANET_RADIUS,
+        0.40,
+        -0.18,
+    )?)
+}
+
 fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
     Ok(RadialFrame::from_latitude_longitude(
         COOKIE_PLANET_CENTER,
@@ -1611,13 +1683,13 @@ fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BLUE_MOON_PLANET_CENTER, BLUE_MOON_PLANET_RADIUS, BLUE_MOON_PLANET_TEXTURE_PATH,
-        COOKIE_LEVEL_PIG_COUNT, COOKIE_PLANET_CENTER, COOKIE_PLANET_RADIUS,
-        GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
+        BLUE_MOON_LEVEL_PIG_COUNT, BLUE_MOON_PLANET_CENTER, BLUE_MOON_PLANET_RADIUS,
+        BLUE_MOON_PLANET_TEXTURE_PATH, COOKIE_LEVEL_PIG_COUNT, COOKIE_PLANET_CENTER,
+        COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
         GALAXY_SELECTOR_LEVEL_THREE_CENTER, LEVEL_THREE_PLANET_CENTER, LEVEL_THREE_PLANET_RADIUS,
         PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U,
         SPACE_SUN_V, SceneState, SpaceMaterials, add_radial_box, blue_moon_orbit_camera,
-        blue_moon_skybox, build_blue_moon_scene_with_metadata,
+        blue_moon_skybox, blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
         build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
         build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
         cookie_level_frame, cookie_world_orbit_camera, cookie_world_skybox,
@@ -1625,7 +1697,9 @@ mod tests {
         level_three_skybox, register_space_materials, space_levels_orbit_camera, space_menu_skybox,
         space_skybox_color, space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
-    use crate::{color::Color, material::Material, math::Vec3, ray::Ray, scene::Scene};
+    use crate::{
+        color::Color, material::Material, math::Vec3, radial::RadialFrame, ray::Ray, scene::Scene,
+    };
 
     fn color_delta(left: Color, right: Color) -> f32 {
         (left.r - right.r).abs() + (left.g - right.g).abs() + (left.b - right.b).abs()
@@ -1643,7 +1717,7 @@ mod tests {
         assert!(scene.object_count() < 180);
         assert!(metadata.planet_id.is_some());
         assert!(metadata.cookie_planet_id.is_none());
-        assert_eq!(metadata.pig_count, 0);
+        assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
     }
 
     #[test]
@@ -1871,7 +1945,8 @@ mod tests {
     fn blue_moon_scene_contains_required_counts() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
 
-        assert_eq!(metadata.pig_count, 0);
+        assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
+        assert_eq!(metadata.blue_moon_pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
         assert_eq!(metadata.decorative_asteroid_count, 0);
         assert_eq!(metadata.wood_parts, 4);
         assert_eq!(metadata.ice_or_metal_parts, 0);
@@ -1879,12 +1954,21 @@ mod tests {
         assert_eq!(metadata.blue_moon_crater_count, 5);
         assert_eq!(metadata.blue_moon_stone_count, 9);
         assert_eq!(metadata.blue_moon_dirt_base_parts, 3);
-        assert_eq!(scene.sphere_count(), 1 + metadata.blue_moon_stone_count);
-        assert_eq!(scene.cylinder_count(), metadata.blue_moon_crater_count);
-        assert_eq!(scene.cone_count(), 0);
+        assert_eq!(metadata.blue_moon_stone_structure_parts, 6);
+        assert_eq!(
+            scene.sphere_count(),
+            1 + metadata.blue_moon_stone_count + metadata.blue_moon_pig_count * 5
+        );
+        assert_eq!(
+            scene.cylinder_count(),
+            metadata.blue_moon_crater_count + metadata.blue_moon_pig_count
+        );
+        assert_eq!(scene.cone_count(), metadata.blue_moon_pig_count * 2);
         assert_eq!(
             scene.oriented_box_count(),
-            metadata.blue_moon_dirt_base_parts + metadata.wood_parts
+            metadata.blue_moon_dirt_base_parts
+                + metadata.wood_parts
+                + metadata.blue_moon_stone_structure_parts
         );
     }
 
@@ -1894,14 +1978,16 @@ mod tests {
 
         assert!(metadata.planet_id.is_some());
         assert!(metadata.cookie_planet_id.is_none());
-        assert_eq!(metadata.pig_count, 0);
+        assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
         assert_eq!(
             scene.object_count(),
             1 + metadata.blue_moon_crater_count
                 + metadata.blue_moon_stone_count
                 + metadata.blue_moon_dirt_base_parts
-                + metadata.wood_parts,
-            "the blue moon level should contain only the textured planet, surface details, dirt base, and first wooden structure"
+                + metadata.wood_parts
+                + metadata.blue_moon_stone_structure_parts
+                + metadata.blue_moon_pig_count * 8,
+            "the blue moon level should contain only the textured planet, surface details, dirt base, tiered structure, and pigs"
         );
     }
 
@@ -1977,10 +2063,14 @@ mod tests {
         let planet = scene.objects()[metadata.planet_id.unwrap()]
             .as_sphere()
             .unwrap();
+        let mut surface_stones = 0;
 
         assert_eq!(planet.center(), BLUE_MOON_PLANET_CENTER);
         assert_eq!(planet.radius(), BLUE_MOON_PLANET_RADIUS);
-        assert_eq!(scene.sphere_count(), 1 + metadata.blue_moon_stone_count);
+        assert_eq!(
+            scene.sphere_count(),
+            1 + metadata.blue_moon_stone_count + metadata.blue_moon_pig_count * 5
+        );
 
         for primitive in scene.objects() {
             let Some(stone) = primitive.as_sphere() else {
@@ -1994,19 +2084,30 @@ mod tests {
             let surface_clearance =
                 (stone.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
 
-            assert!(stone.radius() <= 0.045);
-            assert!(surface_clearance > stone.radius());
-            assert!(surface_clearance < 0.080);
+            if surface_clearance < 0.080 {
+                surface_stones += 1;
+                assert!(stone.radius() <= 0.045);
+                assert!(surface_clearance > stone.radius());
+            }
         }
+
+        assert_eq!(surface_stones, metadata.blue_moon_stone_count);
     }
 
     #[test]
     fn blue_moon_crater_floors_are_slightly_lifted_from_texture() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+        let SpaceMaterials {
+            moon_crater_floor, ..
+        } = register_space_materials(&mut Scene::new()).unwrap();
+        let craters: Vec<_> = scene
+            .cylinders()
+            .filter(|cylinder| cylinder.material_id() == moon_crater_floor)
+            .collect();
 
-        assert_eq!(scene.cylinder_count(), metadata.blue_moon_crater_count);
+        assert_eq!(craters.len(), metadata.blue_moon_crater_count);
 
-        for crater in scene.cylinders() {
+        for crater in craters {
             let surface_clearance =
                 (crater.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
 
@@ -2018,37 +2119,164 @@ mod tests {
         }
     }
 
+    fn structure_local_point(frame: RadialFrame, point: Vec3) -> Vec3 {
+        frame
+            .basis()
+            .world_to_local_vector(point - frame.surface_point())
+    }
+
+    #[test]
+    fn blue_moon_pigs_rest_on_top_of_structure_parts() {
+        const CONTACT_TOLERANCE: f32 = 0.001;
+        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+        let SpaceMaterials { pig, .. } = register_space_materials(&mut Scene::new()).unwrap();
+        let frame = blue_moon_structure_frame().unwrap();
+        let pig_bodies: Vec<_> = scene
+            .objects()
+            .iter()
+            .filter_map(|primitive| primitive.as_sphere())
+            .filter(|sphere| sphere.material_id() == pig)
+            .collect();
+
+        assert_eq!(pig_bodies.len(), metadata.blue_moon_pig_count);
+
+        for body in pig_bodies {
+            let center = structure_local_point(frame, body.center());
+            let bottom = center.y - body.radius();
+            let mut supports = 0;
+
+            for part in scene.oriented_boxes() {
+                let part_center = structure_local_point(frame, part.center());
+                let half_extents = part.half_extents();
+                let closest = Vec3::new(
+                    center.x.clamp(
+                        part_center.x - half_extents.x,
+                        part_center.x + half_extents.x,
+                    ),
+                    center.y.clamp(
+                        part_center.y - half_extents.y,
+                        part_center.y + half_extents.y,
+                    ),
+                    center.z.clamp(
+                        part_center.z - half_extents.z,
+                        part_center.z + half_extents.z,
+                    ),
+                );
+
+                assert!(
+                    (center - closest).length() >= body.radius() - CONTACT_TOLERANCE,
+                    "pig at {center:?} should not overlap the part at {part_center:?}"
+                );
+
+                if (bottom - (part_center.y + half_extents.y)).abs() < CONTACT_TOLERANCE
+                    && (center.x - part_center.x).abs() <= half_extents.x
+                    && (center.z - part_center.z).abs() <= half_extents.z
+                {
+                    supports += 1;
+                }
+            }
+
+            assert!(supports > 0, "pig at {center:?} should rest on a part");
+        }
+    }
+
+    #[test]
+    fn blue_moon_pigs_face_forward_parallel_to_ground() {
+        const AXIS_TOLERANCE: f32 = 0.0001;
+        let (scene, _) = build_blue_moon_scene_with_metadata().unwrap();
+        let SpaceMaterials {
+            pig, snout, eye, ..
+        } = register_space_materials(&mut Scene::new()).unwrap();
+        let basis = blue_moon_structure_frame().unwrap().basis();
+        let spheres_with = |material_id: usize| -> Vec<_> {
+            scene
+                .objects()
+                .iter()
+                .filter_map(|primitive| primitive.as_sphere())
+                .filter(|sphere| sphere.material_id() == material_id)
+                .collect()
+        };
+        let pig_bodies = spheres_with(pig);
+        let snouts: Vec<_> = scene
+            .cylinders()
+            .filter(|cylinder| cylinder.material_id() == snout)
+            .collect();
+        let ears: Vec<_> = scene
+            .cones()
+            .filter(|cone| cone.material_id() == pig)
+            .collect();
+
+        assert_eq!(snouts.len(), BLUE_MOON_LEVEL_PIG_COUNT);
+        assert_eq!(ears.len(), BLUE_MOON_LEVEL_PIG_COUNT * 2);
+
+        for snout_part in snouts {
+            let axis = snout_part.orientation().up();
+
+            assert!(axis.dot(basis.up()).abs() < AXIS_TOLERANCE);
+            assert!(axis.dot(basis.forward()) > 1.0 - AXIS_TOLERANCE);
+        }
+
+        for ear in ears {
+            assert!(ear.orientation().up().dot(basis.up()) > 1.0 - AXIS_TOLERANCE);
+        }
+
+        for eye_ball in spheres_with(eye) {
+            let body = pig_bodies
+                .iter()
+                .min_by(|left, right| {
+                    let left_distance = (left.center() - eye_ball.center()).length();
+                    let right_distance = (right.center() - eye_ball.center()).length();
+                    left_distance.total_cmp(&right_distance)
+                })
+                .unwrap();
+            let offset = basis.world_to_local_vector(eye_ball.center() - body.center());
+
+            assert!(offset.z > body.radius() * 0.5);
+            assert!(offset.z > offset.y);
+        }
+    }
+
     #[test]
     fn blue_moon_first_wood_structure_sits_on_dirt_base() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
         let mut dirt_parts = 0;
         let mut wood_parts = 0;
+        let mut stone_parts = 0;
 
         assert_eq!(metadata.blue_moon_dirt_base_parts, 3);
         assert_eq!(metadata.wood_parts, 4);
+        assert_eq!(metadata.blue_moon_stone_structure_parts, 6);
 
         for box_object in scene.oriented_boxes() {
             let surface_clearance =
                 (box_object.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
             let half_extents = box_object.half_extents();
+            let material = scene.material(box_object.material_id()).unwrap();
 
-            if half_extents.z >= 0.20 {
+            if material.albedo.r < 0.32 && material.albedo.g < 0.20 {
                 dirt_parts += 1;
                 assert!(surface_clearance < half_extents.y);
                 assert!(surface_clearance + half_extents.y > 0.075);
                 assert!(half_extents.x >= 0.20);
                 assert!(half_extents.z >= 0.20);
-            } else {
+            } else if material.albedo.r > material.albedo.g {
                 wood_parts += 1;
                 assert!(surface_clearance > half_extents.y);
                 assert!(surface_clearance >= 0.160);
                 assert!(half_extents.x <= 0.45);
+                assert!(half_extents.z <= 0.06);
+            } else {
+                stone_parts += 1;
+                assert!(surface_clearance > half_extents.y);
+                assert!(surface_clearance >= 0.600);
+                assert!(half_extents.x <= 0.30);
                 assert!(half_extents.z <= 0.06);
             }
         }
 
         assert_eq!(dirt_parts, metadata.blue_moon_dirt_base_parts);
         assert_eq!(wood_parts, metadata.wood_parts);
+        assert_eq!(stone_parts, metadata.blue_moon_stone_structure_parts);
     }
 
     #[test]
@@ -2170,11 +2398,15 @@ mod tests {
     }
 
     #[test]
-    fn space_levels_scene_keeps_cookie_pigs_while_blue_moon_is_clean() {
+    fn space_levels_scene_contains_cookie_and_blue_moon_pigs() {
         let (_, metadata) = build_space_levels_scene_with_metadata().unwrap();
 
         assert_eq!(metadata.cookie_pig_count, COOKIE_LEVEL_PIG_COUNT);
-        assert_eq!(metadata.pig_count, COOKIE_LEVEL_PIG_COUNT);
+        assert_eq!(metadata.blue_moon_pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
+        assert_eq!(
+            metadata.pig_count,
+            COOKIE_LEVEL_PIG_COUNT + BLUE_MOON_LEVEL_PIG_COUNT
+        );
     }
 
     #[test]
