@@ -42,6 +42,7 @@ const SKYBOX_ASTEROID_B_U: f32 = 0.835;
 const SKYBOX_ASTEROID_B_V: f32 = 0.455;
 const SKYBOX_ASTEROID_C_U: f32 = 0.425;
 const SKYBOX_ASTEROID_C_V: f32 = 0.730;
+const BLUE_MOON_PLANET_TEXTURE_PATH: &str = "assets/textures/blue_moon_planet.ppm";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneState {
@@ -74,16 +75,6 @@ struct SkyboxAsteroid {
     opacity: f32,
     seed: f32,
 }
-
-const BLUE_MOON_TEXTURE: &str = "\
-P3
-4 4
-255
-104 116 110  150 160 150  78 88 84    170 176 164
-164 172 160  96 108 102   130 140 130  86 96 92
-112 124 118  178 184 170  92 106 100   146 156 144
-74 84 80     126 138 130  158 166 154  98 110 104
-";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SpaceBuildError {
@@ -694,7 +685,7 @@ fn add_blue_moon_world(
 }
 
 fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBuildError> {
-    let moon_texture = scene.add_texture(Texture::from_ppm_text(BLUE_MOON_TEXTURE)?);
+    let moon_texture = scene.add_texture(Texture::from_ppm_file(BLUE_MOON_PLANET_TEXTURE_PATH)?);
 
     let moon = scene.add_material(
         Material::new(
@@ -706,7 +697,7 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
             1.0,
             Color::new(0.105, 0.120, 0.095),
         )
-        .with_texture(moon_texture, Vec2::new(4.0, 2.0), WrapMode::Repeat),
+        .with_texture(moon_texture, Vec2::new(1.0, 1.0), WrapMode::Repeat),
     )?;
     let crater = scene.add_material(Material::new(
         Color::new(0.20, 0.31, 0.29),
@@ -1428,19 +1419,19 @@ fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        BLUE_MOON_PLANET_CENTER, BLUE_MOON_PLANET_RADIUS, COOKIE_LEVEL_PIG_COUNT,
-        COOKIE_PLANET_CENTER, COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER,
-        GALAXY_SELECTOR_COOKIE_CENTER, GALAXY_SELECTOR_LEVEL_THREE_CENTER,
-        LEVEL_THREE_PLANET_CENTER, LEVEL_THREE_PLANET_RADIUS, PlanetType, SKYBOX_ASTEROID_A_U,
-        SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U, SPACE_SUN_V, SceneState,
-        SpaceMaterials, add_radial_box, blue_moon_orbit_camera, blue_moon_skybox,
-        build_blue_moon_scene_with_metadata, build_cookie_world_scene_with_metadata,
-        build_galaxy_selector_scene, build_level_three_scene_with_metadata,
-        build_space_levels_scene_with_metadata, cookie_level_frame, cookie_world_orbit_camera,
-        cookie_world_skybox, galaxy_selector_orbit_camera, galaxy_selector_worlds,
-        level_three_orbit_camera, level_three_skybox, register_space_materials,
-        space_levels_orbit_camera, space_menu_skybox, space_skybox_color, space_skybox_texture,
-        sun_light_position, wrapped_uv_distance,
+        BLUE_MOON_PLANET_CENTER, BLUE_MOON_PLANET_RADIUS, BLUE_MOON_PLANET_TEXTURE_PATH,
+        COOKIE_LEVEL_PIG_COUNT, COOKIE_PLANET_CENTER, COOKIE_PLANET_RADIUS,
+        GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
+        GALAXY_SELECTOR_LEVEL_THREE_CENTER, LEVEL_THREE_PLANET_CENTER, LEVEL_THREE_PLANET_RADIUS,
+        PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U,
+        SPACE_SUN_V, SceneState, SpaceMaterials, add_radial_box, blue_moon_orbit_camera,
+        blue_moon_skybox, build_blue_moon_scene_with_metadata,
+        build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
+        build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
+        cookie_level_frame, cookie_world_orbit_camera, cookie_world_skybox,
+        galaxy_selector_orbit_camera, galaxy_selector_worlds, level_three_orbit_camera,
+        level_three_skybox, register_space_materials, space_levels_orbit_camera, space_menu_skybox,
+        space_skybox_color, space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
     use crate::{color::Color, material::Material, math::Vec3, ray::Ray, scene::Scene};
 
@@ -1738,6 +1729,36 @@ mod tests {
                 assert!(scene.texture(texture_id).is_some());
             }
         }
+    }
+
+    #[test]
+    fn blue_moon_planet_uses_beak_impact_texture_asset() {
+        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+        let planet = scene.objects()[metadata.planet_id.unwrap()]
+            .as_sphere()
+            .unwrap();
+        let material = scene.material(planet.material_id()).unwrap();
+        let texture_id = material.texture_id.unwrap();
+        let texture = scene.texture(texture_id).unwrap();
+        let top = texture
+            .pixel(texture.width() / 2, texture.height() / 8)
+            .unwrap();
+        let middle = texture
+            .pixel(texture.width() / 2, texture.height() / 2)
+            .unwrap();
+        let lower = texture
+            .pixel(texture.width() / 2, texture.height() - texture.height() / 8)
+            .unwrap();
+
+        assert_eq!(
+            BLUE_MOON_PLANET_TEXTURE_PATH,
+            "assets/textures/blue_moon_planet.ppm"
+        );
+        assert_eq!(texture.width(), 256);
+        assert_eq!(texture.height(), 128);
+        assert_eq!(material.uv_scale, crate::math::Vec2::new(1.0, 1.0));
+        assert!(color_delta(top, middle) > 0.02);
+        assert!(color_delta(middle, lower) > 0.02);
     }
 
     #[test]
