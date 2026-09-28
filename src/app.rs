@@ -21,10 +21,9 @@ const LEVEL_INTERACTIVE_MAX_HEIGHT: usize = 270;
 const FULL_QUALITY_DELAY: Duration = Duration::from_millis(180);
 const PRINT_RENDER_TIMES: bool = true;
 const LEFT_CLICK_DRAG_THRESHOLD: f32 = 5.0;
-const LEVEL_NUMBER_FONT_SIZE: i32 = 92;
-const LEVEL_NAME_FONT_SIZE: i32 = 24;
-const MENU_TITLE_FONT_SIZE: i32 = 46;
-const MENU_SUBTITLE_FONT_SIZE: i32 = 24;
+const LEVEL_NAME_FONT_SIZE: i32 = 30;
+const MENU_TITLE_FONT_SIZE: i32 = 94;
+const MENU_SUBTITLE_FONT_SIZE: i32 = 104;
 const STATUS_FONT_SIZE: i32 = 20;
 const CONTROLS_FONT_SIZE: i32 = 20;
 
@@ -797,8 +796,6 @@ struct UiOverlayState {
 }
 
 fn draw_raylib_ui(drawing: &mut RaylibDrawHandle<'_>, camera: &Camera, ui: UiOverlayState) {
-    draw_status_overlay(drawing, ui.scene_state);
-
     if ui.scene_state == SceneState::Galaxy {
         draw_selector_header(drawing);
         draw_selector_world_ui(
@@ -809,28 +806,75 @@ fn draw_raylib_ui(drawing: &mut RaylibDrawHandle<'_>, camera: &Camera, ui: UiOve
             ui.framebuffer_width,
             ui.framebuffer_height,
         );
+        draw_selector_footer(drawing);
+    } else {
+        draw_status_overlay(drawing, ui.scene_state);
+        draw_controls_overlay(drawing, ui.controls_width);
     }
-
-    draw_controls_overlay(drawing, ui.controls_width);
 }
 
 fn draw_selector_header(drawing: &mut RaylibDrawHandle<'_>) {
-    let screen_width = drawing.get_screen_width();
-    draw_text_centered(
+    let scale = menu_scale(drawing.get_screen_height());
+    let center_x = drawing.get_screen_width() / 2;
+    draw_logo_line(
         drawing,
-        "Angry Birds Space Diorama",
-        screen_width / 2,
-        34,
-        MENU_TITLE_FONT_SIZE,
-        Color::new(246, 248, 255, 255),
+        "ANGRY BIRDS",
+        center_x,
+        (32.0 * scale).round() as i32,
+        (MENU_TITLE_FONT_SIZE as f32 * scale).round() as i32,
+        Color::new(255, 255, 248, 255),
+    );
+    draw_logo_line(
+        drawing,
+        "SPACE",
+        center_x,
+        (137.0 * scale).round() as i32,
+        (MENU_SUBTITLE_FONT_SIZE as f32 * scale).round() as i32,
+        Color::new(164, 231, 35, 255),
     );
     draw_text_centered(
         drawing,
-        "Selecciona un planeta",
-        screen_width / 2,
-        88,
-        MENU_SUBTITLE_FONT_SIZE,
-        Color::new(174, 210, 255, 235),
+        "DIORAMA  /  SELECCION DE MUNDOS",
+        center_x,
+        (255.0 * scale).round() as i32,
+        (20.0 * scale).round() as i32,
+        Color::new(219, 236, 255, 225),
+    );
+}
+
+fn draw_logo_line(
+    drawing: &mut RaylibDrawHandle<'_>,
+    text: &str,
+    center_x: i32,
+    y: i32,
+    font_size: i32,
+    color: Color,
+) {
+    let x = center_x - approximate_text_width(text, font_size) / 2;
+    let outline = (font_size / 14).max(2);
+    for (dx, dy) in [(-outline, 0), (outline, 0), (0, -outline), (0, outline)] {
+        drawing.draw_text(text, x + dx, y + dy, font_size, Color::new(0, 0, 0, 240));
+    }
+    drawing.draw_text(text, x, y, font_size, color);
+}
+
+fn menu_scale(screen_height: i32) -> f32 {
+    (screen_height.max(1) as f32 / 1080.0).clamp(0.55, 2.0)
+}
+
+fn draw_selector_footer(drawing: &mut RaylibDrawHandle<'_>) {
+    let scale = menu_scale(drawing.get_screen_height());
+    let center_x = drawing.get_screen_width() / 2;
+    let y = drawing.get_screen_height() - (45.0 * scale).round() as i32;
+    let font_size = (18.0 * scale).round() as i32;
+
+    draw_text_centered(
+        drawing,
+        "CLICK EN UN PLANETA  /  CLICK DERECHO: ROTAR  /  RUEDA: ZOOM  /  ESC: SALIR",
+        center_x,
+        y,
+        font_size,
+        Color::new(219, 238, 255, 235),
     );
 }
 
@@ -879,6 +923,7 @@ fn draw_selector_world_ui(
     framebuffer_width: usize,
     framebuffer_height: usize,
 ) {
+    let scale = menu_scale(drawing.get_screen_height());
     for world in space::galaxy_selector_worlds() {
         if let Some((x, y)) =
             project_world_to_pixel(*camera, world.center, framebuffer_width, framebuffer_height)
@@ -889,10 +934,6 @@ fn draw_selector_world_ui(
                 .round() as i32;
             let is_hovered = hover_planet == Some(world.planet);
             let metadata = level_ui_metadata(world.planet);
-            let number_text = metadata.level_number.to_string();
-            let text_width = approximate_text_width(&number_text, LEVEL_NUMBER_FONT_SIZE);
-            let number_x = screen_x - text_width / 2;
-            let number_y = screen_y - LEVEL_NUMBER_FONT_SIZE / 2;
             let radius = projected_radius_pixels(
                 *camera,
                 world.center,
@@ -905,40 +946,15 @@ fn draw_selector_world_ui(
                 draw_planet_halo(drawing, screen_x, screen_y, radius);
             }
 
-            drawing.draw_text(
-                &number_text,
-                number_x + 4,
-                number_y + 4,
-                LEVEL_NUMBER_FONT_SIZE,
-                Color::new(0, 0, 0, 190),
-            );
-            drawing.draw_text(
-                &number_text,
-                number_x,
-                number_y,
-                LEVEL_NUMBER_FONT_SIZE,
-                if is_hovered {
-                    Color::new(255, 255, 176, 255)
-                } else {
-                    Color::new(255, 234, 92, 255)
-                },
-            );
-            draw_level_name(
-                drawing,
-                metadata.name,
-                screen_x,
-                screen_y,
-                radius,
-                is_hovered,
-            );
+            draw_level_name(drawing, metadata, screen_x, screen_y, radius, is_hovered);
 
             if is_hovered {
                 draw_text_centered(
                     drawing,
                     "Click para entrar",
                     screen_x,
-                    screen_y + radius.round() as i32 + 62,
-                    20,
+                    screen_y + radius.round() as i32 + (155.0 * scale).round() as i32,
+                    (20.0 * scale).round() as i32,
                     Color::new(238, 248, 255, 245),
                 );
             }
@@ -982,41 +998,80 @@ fn draw_planet_halo(drawing: &mut RaylibDrawHandle<'_>, x: i32, y: i32, radius: 
 
 fn draw_level_name(
     drawing: &mut RaylibDrawHandle<'_>,
-    name: &str,
+    metadata: LevelUiMetadata,
     center_x: i32,
     center_y: i32,
     radius: f32,
     highlighted: bool,
 ) {
-    let y = center_y + radius.round() as i32 + 24;
-    let width = approximate_text_width(name, LEVEL_NAME_FONT_SIZE);
-    let x = center_x - width / 2;
-    let background_padding = 10;
+    let scale = menu_scale(drawing.get_screen_height());
+    let font_size = (LEVEL_NAME_FONT_SIZE as f32 * scale).round() as i32;
+    let small_font_size = (20.0 * scale).round() as i32;
+    let panel_width = (approximate_text_width(metadata.name, font_size)
+        + (48.0 * scale).round() as i32)
+        .max((194.0 * scale).round() as i32);
+    let panel_height = (58.0 * scale).round() as i32;
+    let x = center_x - panel_width / 2;
+    let y = center_y + radius.round() as i32 + (20.0 * scale).round() as i32;
+    let panel_color = match metadata.planet {
+        PlanetType::BlueMoon => Color::new(42, 72, 94, 242),
+        PlanetType::CookieWorld => Color::new(111, 67, 37, 242),
+        PlanetType::AsteroidBelt => Color::new(76, 57, 83, 242),
+    };
 
     drawing.draw_rectangle(
-        x - background_padding,
-        y - 4,
-        width + background_padding * 2,
-        LEVEL_NAME_FONT_SIZE + 12,
-        Color::new(0, 0, 0, if highlighted { 176 } else { 132 }),
-    );
-    drawing.draw_text(
-        name,
-        x + 2,
-        y + 2,
-        LEVEL_NAME_FONT_SIZE,
+        x + 5,
+        y + 6,
+        panel_width,
+        panel_height,
         Color::new(0, 0, 0, 180),
     );
-    drawing.draw_text(
-        name,
+    drawing.draw_rectangle(x, y, panel_width, panel_height, panel_color);
+    drawing.draw_rectangle_lines(
         x,
         y,
-        LEVEL_NAME_FONT_SIZE,
+        panel_width,
+        panel_height,
         if highlighted {
-            Color::new(255, 246, 158, 255)
+            Color::new(255, 234, 101, 255)
         } else {
-            Color::new(218, 235, 255, 245)
+            Color::new(204, 224, 239, 255)
         },
+    );
+    draw_text_centered(
+        drawing,
+        metadata.name,
+        center_x,
+        y + (13.0 * scale).round() as i32,
+        font_size,
+        Color::new(255, 252, 238, 255),
+    );
+
+    let info_y = y + panel_height + (8.0 * scale).round() as i32;
+    let info_height = (34.0 * scale).round() as i32;
+    let info_width = (panel_width as f32 * 0.84).round() as i32;
+    let info_x = center_x - info_width / 2;
+    drawing.draw_rectangle(
+        info_x,
+        info_y,
+        info_width,
+        info_height,
+        Color::new(32, 57, 80, 226),
+    );
+    drawing.draw_rectangle_lines(
+        info_x,
+        info_y,
+        info_width,
+        info_height,
+        Color::new(192, 218, 239, 235),
+    );
+    draw_text_centered(
+        drawing,
+        &format!("MUNDO {:02}  /  EXPLORAR", metadata.level_number),
+        center_x,
+        info_y + (6.0 * scale).round() as i32,
+        small_font_size,
+        Color::new(240, 246, 255, 255),
     );
 }
 
@@ -1564,6 +1619,23 @@ mod tests {
         assert_eq!(worlds.len(), 3);
         assert!(worlds.iter().all(|world| world.radius > 0.0));
         assert!(worlds.iter().all(|world| world.level_number > 0));
+    }
+
+    #[test]
+    fn selector_worlds_start_in_a_spaced_lower_row() {
+        let (width, height) = (1920, 1080);
+        let camera = space::galaxy_selector_orbit_camera(width as f32 / height as f32).to_camera();
+        let positions: Vec<_> = galaxy_selector_worlds()
+            .iter()
+            .map(|world| project_world_to_pixel(camera, world.center, width, height).unwrap())
+            .collect();
+
+        assert!(positions.windows(2).all(|pair| pair[0].0 + 250 < pair[1].0));
+        assert!(
+            positions
+                .iter()
+                .all(|&(_, y)| y > height / 2 && y < height * 3 / 4)
+        );
     }
 
     #[test]

@@ -29,12 +29,15 @@ pub const LEVEL_THREE_PLANET_RADIUS: f32 = 1.70;
 pub const SPACE_SUN_DIRECTION: Vec3 = Vec3::new(-0.76, 0.54, -0.36);
 pub const BLUE_MOON_LEVEL_PIG_COUNT: usize = 6;
 pub const COOKIE_LEVEL_PIG_COUNT: usize = 0;
-pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-2.85, 0.26, 0.0);
-pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 0.98;
-pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(2.65, -0.20, -0.28);
-pub const GALAXY_SELECTOR_COOKIE_RADIUS: f32 = 0.90;
-pub const GALAXY_SELECTOR_LEVEL_THREE_CENTER: Vec3 = Vec3::new(0.0, 1.72, -0.46);
-pub const GALAXY_SELECTOR_LEVEL_THREE_RADIUS: f32 = 0.78;
+pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-3.0, -0.72, 0.0);
+pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 1.12;
+pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(0.0, -0.88, 0.0);
+pub const GALAXY_SELECTOR_COOKIE_RADIUS: f32 = 1.34;
+pub const GALAXY_SELECTOR_LEVEL_THREE_CENTER: Vec3 = Vec3::new(3.0, -0.72, 0.0);
+pub const GALAXY_SELECTOR_LEVEL_THREE_RADIUS: f32 = 1.14;
+const SELECTOR_SUN_U: f32 = 0.25;
+const SELECTOR_SUN_V: f32 = 0.49;
+const SELECTOR_SUN_U_SCALE: f32 = 2.35;
 const SPACE_SKYBOX_WIDTH: usize = 960;
 const SPACE_SKYBOX_HEIGHT: usize = 480;
 const SPACE_SUN_U: f32 = 0.125;
@@ -241,7 +244,7 @@ pub(crate) fn build_cookie_world_scene_with_metadata()
 pub fn build_galaxy_selector_scene() -> Result<Scene, SpaceBuildError> {
     let (mut scene, materials) = base_space_scene_with_skybox(space_menu_skybox()?)?;
 
-    scene.set_ambient_light(Color::new(0.300, 0.340, 0.405));
+    scene.set_ambient_light(Color::new(0.360, 0.380, 0.440));
     add_selector_worlds(&mut scene, materials)?;
     add_selector_lighting(&mut scene);
 
@@ -384,7 +387,7 @@ fn base_space_scene_with_skybox(
 }
 
 pub fn space_menu_skybox() -> Result<Skybox, TextureError> {
-    Ok(Skybox::new(space_skybox_texture()?)
+    Ok(Skybox::new(selector_skybox_texture()?)
         .with_intensity(1.18)
         .with_horizontal_rotation(0.0))
 }
@@ -413,6 +416,14 @@ pub fn angry_birds_space_skybox() -> Result<Skybox, TextureError> {
 }
 
 fn space_skybox_texture() -> Result<Texture, TextureError> {
+    generate_space_skybox(space_skybox_color)
+}
+
+fn selector_skybox_texture() -> Result<Texture, TextureError> {
+    generate_space_skybox(selector_skybox_color)
+}
+
+fn generate_space_skybox(color_at: fn(f32, f32) -> Color) -> Result<Texture, TextureError> {
     let mut pixels = Vec::with_capacity(SPACE_SKYBOX_WIDTH * SPACE_SKYBOX_HEIGHT);
 
     for y in 0..SPACE_SKYBOX_HEIGHT {
@@ -420,11 +431,68 @@ fn space_skybox_texture() -> Result<Texture, TextureError> {
 
         for x in 0..SPACE_SKYBOX_WIDTH {
             let u = x as f32 / (SPACE_SKYBOX_WIDTH - 1) as f32;
-            pixels.push(space_skybox_color(u, v));
+            pixels.push(color_at(u, v));
         }
     }
 
     Texture::new(SPACE_SKYBOX_WIDTH, SPACE_SKYBOX_HEIGHT, pixels)
+}
+
+fn selector_skybox_color(u: f32, v: f32) -> Color {
+    let u = u.rem_euclid(1.0);
+    let background = Color::new(0.010, 0.045, 0.130)
+        .lerp(Color::new(0.020, 0.095, 0.230), smoothstep(0.0, 1.0, v));
+    let mut color = add_cartoon_cloud_layers(background, u, v);
+    let star = star_strength(u, v);
+    color += Color::new(0.86, 0.96, 1.0) * star;
+    color = add_background_asteroids(color, u, v);
+
+    let distance = wrapped_uv_distance(u, v, SELECTOR_SUN_U, SELECTOR_SUN_V, SELECTOR_SUN_U_SCALE);
+    let outer_glow = 1.0 - smoothstep(0.060, 0.17, distance);
+    let inner_glow = 1.0 - smoothstep(0.045, 0.10, distance);
+    color += Color::new(0.90, 0.48, 0.03) * (outer_glow * 0.28);
+    color += Color::new(1.0, 0.78, 0.16) * (inner_glow * 0.50);
+
+    let disk = 1.0 - smoothstep(0.067, 0.075, distance);
+    let bands = smooth_noise(u * 28.0 + 3.0, v * 24.0 + 7.0) * 0.10;
+    let sun = Color::new(1.0, 0.78 + bands, 0.20 + bands * 0.65);
+    color.lerp(sun, disk).clamped()
+}
+
+fn selector_cookie_texture() -> Result<Texture, TextureError> {
+    const WIDTH: usize = 256;
+    const HEIGHT: usize = 128;
+    const CHIPS: [(f32, f32, f32); 8] = [
+        (0.08, 0.32, 0.042),
+        (0.24, 0.71, 0.052),
+        (0.36, 0.42, 0.037),
+        (0.49, 0.82, 0.044),
+        (0.61, 0.23, 0.048),
+        (0.72, 0.58, 0.041),
+        (0.85, 0.76, 0.053),
+        (0.94, 0.39, 0.036),
+    ];
+    let mut pixels = Vec::with_capacity(WIDTH * HEIGHT);
+
+    for y in 0..HEIGHT {
+        let v = y as f32 / (HEIGHT - 1) as f32;
+        for x in 0..WIDTH {
+            let u = x as f32 / (WIDTH - 1) as f32;
+            let baked = smooth_noise(u * 9.0, v * 6.0) * 0.10;
+            let mut color = Color::new(0.88 - baked, 0.59 - baked * 0.65, 0.30 - baked * 0.40);
+
+            for (chip_u, chip_v, radius) in CHIPS {
+                let du = ((u - chip_u + 0.5).rem_euclid(1.0) - 0.5) * 0.75;
+                let dv = v - chip_v;
+                let distance = (du * du + dv * dv).sqrt();
+                let chip = 1.0 - smoothstep(radius * 0.75, radius, distance);
+                color = color.lerp(Color::new(0.24, 0.11, 0.06), chip);
+            }
+            pixels.push(color);
+        }
+    }
+
+    Texture::new(WIDTH, HEIGHT, pixels)
 }
 
 fn danger_zone_skybox_texture() -> Result<Texture, TextureError> {
@@ -714,6 +782,7 @@ fn add_blue_moon_world(
 
 fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBuildError> {
     let moon_texture = scene.add_texture(Texture::from_ppm_file(BLUE_MOON_PLANET_TEXTURE_PATH)?);
+    let selector_cookie_texture = scene.add_texture(selector_cookie_texture()?);
     let wood_block_texture = scene.add_texture(Texture::from_ppm_file(WOOD_BLOCK_TEXTURE_PATH)?);
     let stone_block_texture = scene.add_texture(Texture::from_ppm_file(STONE_BLOCK_TEXTURE_PATH)?);
     let tnt_crate_texture = scene.add_texture(Texture::from_ppm_file(TNT_CRATE_TEXTURE_PATH)?);
@@ -805,33 +874,46 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         1.005,
         Color::new(0.060, 0.018, 0.110),
     ))?;
-    let selector_locked_moon = scene.add_material(Material::new(
-        Color::new(0.18, 0.24, 0.34),
-        0.12,
-        16.0,
-        0.0,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let selector_locked_cookie = scene.add_material(Material::new(
-        Color::new(0.27, 0.16, 0.07),
-        0.12,
-        16.0,
-        0.0,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let selector_locked_level_three = scene.add_material(Material::new(
-        Color::new(0.17, 0.10, 0.29),
-        0.14,
-        18.0,
-        0.0,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
+    let selector_locked_moon = scene.add_material(
+        Material::new(
+            Color::new(0.82, 0.94, 1.0),
+            0.18,
+            24.0,
+            0.0,
+            0.0,
+            1.0,
+            Color::new(0.10, 0.14, 0.18),
+        )
+        .with_texture(moon_texture, Vec2::new(1.0, 1.0), WrapMode::Repeat),
+    )?;
+    let selector_locked_cookie = scene.add_material(
+        Material::new(
+            Color::new(1.0, 0.86, 0.68),
+            0.22,
+            24.0,
+            0.0,
+            0.0,
+            1.0,
+            Color::new(0.10, 0.055, 0.02),
+        )
+        .with_texture(
+            selector_cookie_texture,
+            Vec2::new(1.0, 1.0),
+            WrapMode::Repeat,
+        ),
+    )?;
+    let selector_locked_level_three = scene.add_material(
+        Material::new(
+            Color::new(0.82, 0.75, 0.98),
+            0.20,
+            26.0,
+            0.0,
+            0.0,
+            1.0,
+            Color::new(0.15, 0.11, 0.21),
+        )
+        .with_texture(moon_texture, Vec2::new(1.0, 1.0), WrapMode::Repeat),
+    )?;
     let cookie = scene.add_material(Material::new(
         Color::new(0.86, 0.56, 0.26),
         0.18,
@@ -1376,6 +1458,17 @@ fn add_selector_lighting(scene: &mut Scene) {
         Color::new(1.0, 0.78, 0.45),
         5.4,
     ));
+    for (world, color) in galaxy_selector_worlds().into_iter().zip([
+        Color::new(0.82, 0.94, 1.0),
+        Color::new(1.0, 0.84, 0.62),
+        Color::new(0.92, 0.82, 1.0),
+    ]) {
+        scene.add_light(PointLight::new(
+            world.center + Vec3::new(-world.radius * 0.30, world.radius * 0.38, world.radius),
+            color,
+            1.6,
+        ));
+    }
 }
 
 fn add_space_lighting(scene: &mut Scene) {
@@ -1842,6 +1935,11 @@ mod tests {
         assert_eq!(worlds[2].level_number, 3);
         assert!(worlds[2].locked);
         assert!(worlds[2].radius > 0.0);
+        assert!(worlds[0].center.x < worlds[1].center.x);
+        assert!(worlds[1].center.x < worlds[2].center.x);
+        assert!(worlds.iter().all(|world| world.center.y < 0.0));
+        assert!(worlds[1].radius > worlds[0].radius);
+        assert!(worlds[1].radius > worlds[2].radius);
     }
 
     #[test]
@@ -1856,18 +1954,35 @@ mod tests {
     }
 
     #[test]
-    fn galaxy_selector_planet_bodies_use_dark_locked_materials() {
+    fn galaxy_selector_planets_are_colored_and_lit_within_gravity_fields() {
         let scene = build_galaxy_selector_scene().unwrap();
 
-        for body_index in [1, 3, 5] {
-            let body = scene.objects()[body_index].as_sphere().unwrap();
+        for world in galaxy_selector_worlds() {
+            let body = scene
+                .objects()
+                .iter()
+                .filter_map(|object| object.as_sphere())
+                .find(|sphere| sphere.center() == world.center && sphere.radius() == world.radius)
+                .unwrap();
             let material = scene.material(body.material_id()).unwrap();
 
-            assert!(material.albedo.r <= 0.30);
-            assert!(material.albedo.g <= 0.30);
-            assert!(material.albedo.b <= 0.36);
+            assert!(material.albedo.r + material.albedo.g + material.albedo.b > 1.8);
+            assert!(material.texture_id.is_some());
             assert_eq!(material.transparency, 0.0);
+            assert!(scene.lights().iter().any(|light| {
+                let distance = (light.position - world.center).length();
+                distance > world.radius && distance < world.radius * 1.16
+            }));
         }
+    }
+
+    #[test]
+    fn selector_skybox_has_a_central_sun_over_dark_blue_space() {
+        let sun = super::selector_skybox_color(super::SELECTOR_SUN_U, super::SELECTOR_SUN_V);
+        let background = super::selector_skybox_color(0.50, super::SELECTOR_SUN_V);
+
+        assert!(sun.r > 0.95 && sun.g > 0.70 && sun.b < 0.45);
+        assert!(background.b > background.r * 2.0);
     }
 
     #[test]
