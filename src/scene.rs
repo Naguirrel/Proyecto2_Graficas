@@ -1,7 +1,8 @@
 use crate::{
-    color::Color, cone::Cone, cube::Cube, cylinder::Cylinder, intersection::Intersection,
-    light::PointLight, material::Material, oriented_box::OrientedBox, primitive::Primitive,
-    ray::Ray, skybox::Skybox, sphere::Sphere, texture::Texture,
+    color::Color, cone::Cone, cube::Cube, curved_tetrahedron::CurvedTetrahedron,
+    cylinder::Cylinder, intersection::Intersection, light::PointLight, material::Material,
+    oriented_box::OrientedBox, primitive::Primitive, ray::Ray, skybox::Skybox, sphere::Sphere,
+    texture::Texture,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -63,6 +64,13 @@ impl Scene {
         self.add_primitive(cone.into())
     }
 
+    pub fn add_curved_tetrahedron(
+        &mut self,
+        tetrahedron: CurvedTetrahedron,
+    ) -> Result<(), SceneError> {
+        self.add_primitive(tetrahedron.into())
+    }
+
     pub fn add_primitive(&mut self, primitive: Primitive) -> Result<(), SceneError> {
         let material_id = primitive.material_id();
 
@@ -118,6 +126,13 @@ impl Scene {
         self.objects.iter().filter_map(Primitive::as_cone)
     }
 
+    /// Iterates over curved-tetrahedron primitives only, without allocating.
+    pub fn curved_tetrahedra(&self) -> impl Iterator<Item = &CurvedTetrahedron> {
+        self.objects
+            .iter()
+            .filter_map(Primitive::as_curved_tetrahedron)
+    }
+
     pub fn object_count(&self) -> usize {
         self.objects.len()
     }
@@ -155,6 +170,10 @@ impl Scene {
             .iter()
             .filter(|primitive| primitive.as_cone().is_some())
             .count()
+    }
+
+    pub fn curved_tetrahedron_count(&self) -> usize {
+        self.curved_tetrahedra().count()
     }
 
     pub fn materials(&self) -> &[Material] {
@@ -219,6 +238,7 @@ mod tests {
         color::Color,
         cone::Cone,
         cube::Cube,
+        curved_tetrahedron::CurvedTetrahedron,
         cylinder::Cylinder,
         light::PointLight,
         material::Material,
@@ -269,6 +289,10 @@ mod tests {
 
     fn unit_cone(material_id: usize) -> Cone {
         Cone::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), material_id).unwrap()
+    }
+
+    fn unit_curved_tetrahedron(material_id: usize) -> CurvedTetrahedron {
+        CurvedTetrahedron::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), material_id).unwrap()
     }
 
     #[test]
@@ -654,6 +678,36 @@ mod tests {
     }
 
     #[test]
+    fn add_curved_tetrahedron_stores_and_counts_it() {
+        let mut scene = diffuse_scene();
+        let tetrahedron = unit_curved_tetrahedron(0);
+
+        assert_eq!(scene.add_curved_tetrahedron(tetrahedron), Ok(()));
+        assert_eq!(scene.object_count(), 1);
+        assert_eq!(scene.curved_tetrahedron_count(), 1);
+        assert_eq!(scene.cone_count(), 0);
+        assert_eq!(
+            scene.objects()[0].as_curved_tetrahedron(),
+            Some(&tetrahedron)
+        );
+        assert_eq!(
+            scene.add_curved_tetrahedron(unit_curved_tetrahedron(9)),
+            Err(SceneError::MissingMaterial { material_id: 9 })
+        );
+    }
+
+    #[test]
+    fn scene_intersection_finds_curved_tetrahedron() {
+        let mut scene = diffuse_scene();
+        scene
+            .add_curved_tetrahedron(unit_curved_tetrahedron(0))
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
     fn scene_intersection_finds_cone() {
         let mut scene = diffuse_scene();
         scene.add_cone(unit_cone(0)).unwrap();
@@ -672,6 +726,7 @@ mod tests {
             Primitive::from(unit_oriented_box(0)),
             Primitive::from(unit_cylinder(0)),
             Primitive::from(unit_cone(0)),
+            Primitive::from(unit_curved_tetrahedron(0)),
         ] {
             let mut scene = diffuse_scene();
             scene.add_primitive(primitive).unwrap();

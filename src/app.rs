@@ -1824,12 +1824,12 @@ mod tests {
     }
 
     #[test]
-    fn third_planet_builds_placeholder_scene() {
+    fn third_planet_builds_asteroid_bridge_scene() {
         let scene = build_planet_scene(PlanetType::AsteroidBelt).unwrap();
 
-        assert_eq!(scene.object_count(), 2);
+        assert!(scene.object_count() > 100);
         assert!(scene.skybox().is_some());
-        assert!(scene.lights().len() >= 5);
+        assert!(scene.lights().len() >= 3);
     }
 
     #[test]
