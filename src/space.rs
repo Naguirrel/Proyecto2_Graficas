@@ -90,6 +90,9 @@ pub enum SpaceBuildError {
 #[derive(Debug, Clone, Copy)]
 struct SpaceMaterials {
     moon: usize,
+    moon_crater_floor: usize,
+    moon_stone: usize,
+    moon_stone_light: usize,
     gravity_field: usize,
     cookie_gravity_field: usize,
     level_three: usize,
@@ -120,6 +123,8 @@ pub(crate) struct SpaceSceneMetadata {
     pub cookie_gravity_field_id: Option<usize>,
     pub level_three_planet_id: Option<usize>,
     pub level_three_gravity_field_id: Option<usize>,
+    pub blue_moon_crater_count: usize,
+    pub blue_moon_stone_count: usize,
     pub decorative_asteroid_count: usize,
     pub cookie_chocolate_chip_count: usize,
     pub candy_count: usize,
@@ -678,6 +683,7 @@ fn add_blue_moon_world(
     materials: SpaceMaterials,
 ) -> Result<(), SpaceBuildError> {
     add_planet(scene, metadata, materials)?;
+    add_blue_moon_surface_details(scene, metadata, materials)?;
 
     Ok(())
 }
@@ -697,6 +703,33 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         )
         .with_texture(moon_texture, Vec2::new(1.0, 1.0), WrapMode::Repeat),
     )?;
+    let moon_crater_floor = scene.add_material(Material::new(
+        Color::new(0.20, 0.30, 0.29),
+        0.18,
+        18.0,
+        0.01,
+        0.0,
+        1.0,
+        Color::new(0.005, 0.010, 0.008),
+    ))?;
+    let moon_stone = scene.add_material(Material::new(
+        Color::new(0.42, 0.53, 0.49),
+        0.20,
+        22.0,
+        0.02,
+        0.0,
+        1.0,
+        Color::BLACK,
+    ))?;
+    let moon_stone_light = scene.add_material(Material::new(
+        Color::new(0.58, 0.68, 0.60),
+        0.22,
+        26.0,
+        0.025,
+        0.0,
+        1.0,
+        Color::BLACK,
+    ))?;
     let gravity_field = scene.add_material(Material::new(
         Color::new(0.76, 0.96, 1.0),
         0.16,
@@ -873,6 +906,9 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
 
     Ok(SpaceMaterials {
         moon,
+        moon_crater_floor,
+        moon_stone,
+        moon_stone_light,
         gravity_field,
         cookie_gravity_field,
         level_three,
@@ -909,6 +945,154 @@ fn add_planet(
         materials.moon,
     )?)?;
     metadata.planet_id = Some(planet_id);
+
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BlueMoonCrater {
+    latitude: f32,
+    longitude: f32,
+    radius: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BlueMoonStone {
+    latitude: f32,
+    longitude: f32,
+    radius: f32,
+    light: bool,
+}
+
+const BLUE_MOON_CRATERS: [BlueMoonCrater; 5] = [
+    BlueMoonCrater {
+        latitude: 0.46,
+        longitude: -0.32,
+        radius: 0.145,
+    },
+    BlueMoonCrater {
+        latitude: 0.24,
+        longitude: 0.58,
+        radius: 0.115,
+    },
+    BlueMoonCrater {
+        latitude: -0.06,
+        longitude: -0.82,
+        radius: 0.135,
+    },
+    BlueMoonCrater {
+        latitude: -0.34,
+        longitude: 0.08,
+        radius: 0.105,
+    },
+    BlueMoonCrater {
+        latitude: -0.48,
+        longitude: 0.96,
+        radius: 0.095,
+    },
+];
+
+const BLUE_MOON_STONES: [BlueMoonStone; 9] = [
+    BlueMoonStone {
+        latitude: 0.52,
+        longitude: -0.13,
+        radius: 0.042,
+        light: true,
+    },
+    BlueMoonStone {
+        latitude: 0.36,
+        longitude: -0.48,
+        radius: 0.034,
+        light: false,
+    },
+    BlueMoonStone {
+        latitude: 0.28,
+        longitude: 0.76,
+        radius: 0.030,
+        light: true,
+    },
+    BlueMoonStone {
+        latitude: 0.11,
+        longitude: 0.42,
+        radius: 0.026,
+        light: false,
+    },
+    BlueMoonStone {
+        latitude: -0.02,
+        longitude: -1.02,
+        radius: 0.038,
+        light: false,
+    },
+    BlueMoonStone {
+        latitude: -0.18,
+        longitude: -0.64,
+        radius: 0.030,
+        light: true,
+    },
+    BlueMoonStone {
+        latitude: -0.36,
+        longitude: 0.29,
+        radius: 0.032,
+        light: false,
+    },
+    BlueMoonStone {
+        latitude: -0.51,
+        longitude: 0.74,
+        radius: 0.027,
+        light: true,
+    },
+    BlueMoonStone {
+        latitude: -0.58,
+        longitude: 1.14,
+        radius: 0.035,
+        light: false,
+    },
+];
+
+fn add_blue_moon_surface_details(
+    scene: &mut Scene,
+    metadata: &mut SpaceSceneMetadata,
+    materials: SpaceMaterials,
+) -> Result<(), SpaceBuildError> {
+    for crater in BLUE_MOON_CRATERS {
+        let frame = RadialFrame::from_latitude_longitude(
+            BLUE_MOON_PLANET_CENTER,
+            BLUE_MOON_PLANET_RADIUS,
+            crater.latitude,
+            crater.longitude,
+        )?;
+
+        add_radial_cylinder(
+            scene,
+            frame,
+            Vec3::new(0.0, 0.018, 0.0),
+            crater.radius,
+            0.014,
+            materials.moon_crater_floor,
+        )?;
+        metadata.blue_moon_crater_count += 1;
+    }
+
+    for stone in BLUE_MOON_STONES {
+        let frame = RadialFrame::from_latitude_longitude(
+            BLUE_MOON_PLANET_CENTER,
+            BLUE_MOON_PLANET_RADIUS,
+            stone.latitude,
+            stone.longitude,
+        )?;
+        let material = if stone.light {
+            materials.moon_stone_light
+        } else {
+            materials.moon_stone
+        };
+
+        scene.add_sphere(Sphere::new(
+            frame.position(0.0, stone.radius + 0.024, 0.0),
+            stone.radius,
+            material,
+        )?)?;
+        metadata.blue_moon_stone_count += 1;
+    }
 
     Ok(())
 }
@@ -1633,8 +1817,10 @@ mod tests {
         assert_eq!(metadata.wood_parts, 0);
         assert_eq!(metadata.ice_or_metal_parts, 0);
         assert_eq!(metadata.tnt_parts, 0);
-        assert_eq!(scene.sphere_count(), 1);
-        assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(metadata.blue_moon_crater_count, 5);
+        assert_eq!(metadata.blue_moon_stone_count, 9);
+        assert_eq!(scene.sphere_count(), 1 + metadata.blue_moon_stone_count);
+        assert_eq!(scene.cylinder_count(), metadata.blue_moon_crater_count);
         assert_eq!(scene.cone_count(), 0);
         assert_eq!(scene.oriented_box_count(), 0);
     }
@@ -1648,8 +1834,8 @@ mod tests {
         assert_eq!(metadata.pig_count, 0);
         assert_eq!(
             scene.object_count(),
-            1,
-            "the blue moon level should contain only the textured planet body"
+            1 + metadata.blue_moon_crater_count + metadata.blue_moon_stone_count,
+            "the blue moon level should contain only the textured planet, recessed craters, and stones"
         );
     }
 
@@ -1720,7 +1906,7 @@ mod tests {
     }
 
     #[test]
-    fn blue_moon_planet_is_the_only_sphere() {
+    fn blue_moon_planet_keeps_main_body_and_small_stones() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
         let planet = scene.objects()[metadata.planet_id.unwrap()]
             .as_sphere()
@@ -1728,7 +1914,42 @@ mod tests {
 
         assert_eq!(planet.center(), BLUE_MOON_PLANET_CENTER);
         assert_eq!(planet.radius(), BLUE_MOON_PLANET_RADIUS);
-        assert_eq!(scene.sphere_count(), 1);
+        assert_eq!(scene.sphere_count(), 1 + metadata.blue_moon_stone_count);
+
+        for primitive in scene.objects() {
+            let Some(stone) = primitive.as_sphere() else {
+                continue;
+            };
+
+            if stone.center() == BLUE_MOON_PLANET_CENTER {
+                continue;
+            }
+
+            let surface_clearance =
+                (stone.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
+
+            assert!(stone.radius() <= 0.045);
+            assert!(surface_clearance > stone.radius());
+            assert!(surface_clearance < 0.080);
+        }
+    }
+
+    #[test]
+    fn blue_moon_crater_floors_are_slightly_lifted_from_texture() {
+        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+
+        assert_eq!(scene.cylinder_count(), metadata.blue_moon_crater_count);
+
+        for crater in scene.cylinders() {
+            let surface_clearance =
+                (crater.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
+
+            assert!(crater.radius() >= 0.090);
+            assert!(crater.radius() <= 0.150);
+            assert!(crater.half_height() <= 0.015);
+            assert!(surface_clearance > crater.half_height());
+            assert!(surface_clearance < 0.025);
+        }
     }
 
     #[test]
