@@ -26,7 +26,7 @@ pub const COOKIE_PLANET_RADIUS: f32 = 1.45;
 pub const LEVEL_THREE_PLANET_CENTER: Vec3 = Vec3::new(-0.35, 0.05, 0.10);
 pub const LEVEL_THREE_PLANET_RADIUS: f32 = 1.70;
 pub const SPACE_SUN_DIRECTION: Vec3 = Vec3::new(-0.76, 0.54, -0.36);
-pub const BLUE_MOON_LEVEL_PIG_COUNT: usize = 4;
+pub const BLUE_MOON_LEVEL_PIG_COUNT: usize = 6;
 pub const COOKIE_LEVEL_PIG_COUNT: usize = 2;
 pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-2.85, 0.26, 0.0);
 pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 0.98;
@@ -704,6 +704,7 @@ fn add_blue_moon_world(
     add_planet(scene, metadata, materials)?;
     add_blue_moon_surface_details(scene, metadata, materials)?;
     add_blue_moon_wood_structure(scene, metadata, materials)?;
+    add_blue_moon_side_wood_tower(scene, metadata, materials)?;
     add_blue_moon_second_structure(scene, metadata, materials)?;
 
     Ok(())
@@ -1229,6 +1230,76 @@ fn add_blue_moon_wood_structure(
         (-0.02, 1.030, -0.08, 0.085),
     ] {
         let center = Vec3::new(tangent_x, support_top + radius, tangent_z);
+        add_space_pig_at(scene, frame, center, radius, materials)?;
+        metadata.blue_moon_pig_count += 1;
+        metadata.pig_count += 1;
+    }
+
+    Ok(())
+}
+
+fn add_blue_moon_side_wood_tower(
+    scene: &mut Scene,
+    metadata: &mut SpaceSceneMetadata,
+    materials: SpaceMaterials,
+) -> Result<(), SpaceBuildError> {
+    let frame = blue_moon_side_tower_frame()?;
+    let lower_beam_top = 0.225;
+    let middle_beam_top = 0.705;
+
+    add_radial_box(
+        scene,
+        frame,
+        Vec3::new(0.00, -0.025, 0.00),
+        Vec3::new(0.40, 0.105, 0.24),
+        materials.moon_dirt,
+    )?;
+    metadata.blue_moon_dirt_base_parts += 1;
+
+    for (center, half_extents) in [
+        (Vec3::new(0.00, 0.185, 0.06), Vec3::new(0.36, 0.040, 0.040)),
+        (
+            Vec3::new(-0.28, 0.430, 0.02),
+            Vec3::new(0.040, 0.245, 0.040),
+        ),
+        (Vec3::new(0.24, 0.430, 0.02), Vec3::new(0.040, 0.245, 0.040)),
+        (Vec3::new(-0.02, 0.665, 0.02), Vec3::new(0.34, 0.040, 0.040)),
+        (
+            Vec3::new(-0.10, 0.825, -0.07),
+            Vec3::new(0.035, 0.120, 0.035),
+        ),
+        (
+            Vec3::new(0.11, 0.825, -0.07),
+            Vec3::new(0.035, 0.120, 0.035),
+        ),
+        (
+            Vec3::new(0.005, 0.965, -0.07),
+            Vec3::new(0.140, 0.035, 0.035),
+        ),
+        (
+            Vec3::new(-0.31, 0.955, 0.02),
+            Vec3::new(0.040, 0.220, 0.040),
+        ),
+        (Vec3::new(0.31, 0.955, 0.02), Vec3::new(0.040, 0.220, 0.040)),
+        (Vec3::new(0.00, 1.190, 0.02), Vec3::new(0.42, 0.045, 0.045)),
+    ] {
+        add_radial_box(scene, frame, center, half_extents, materials.wood)?;
+        metadata.wood_parts += 1;
+    }
+
+    add_radial_box(
+        scene,
+        frame,
+        Vec3::new(0.36, middle_beam_top + 0.060, 0.02),
+        Vec3::new(0.070, 0.060, 0.050),
+        materials.moon_stone,
+    )?;
+    metadata.blue_moon_stone_structure_parts += 1;
+
+    for (center, radius) in [
+        (Vec3::new(0.10, lower_beam_top + 0.095, 0.055), 0.095),
+        (Vec3::new(-0.16, middle_beam_top + 0.085, 0.055), 0.085),
+    ] {
         add_space_pig_at(scene, frame, center, radius, materials)?;
         metadata.blue_moon_pig_count += 1;
         metadata.pig_count += 1;
@@ -1822,6 +1893,15 @@ fn blue_moon_second_structure_frame() -> Result<RadialFrame, SpaceBuildError> {
     )?)
 }
 
+fn blue_moon_side_tower_frame() -> Result<RadialFrame, SpaceBuildError> {
+    Ok(RadialFrame::from_latitude_longitude(
+        BLUE_MOON_PLANET_CENTER,
+        BLUE_MOON_PLANET_RADIUS,
+        0.40,
+        -1.10,
+    )?)
+}
+
 fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
     Ok(RadialFrame::from_latitude_longitude(
         COOKIE_PLANET_CENTER,
@@ -1841,14 +1921,14 @@ mod tests {
         PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U,
         SPACE_SUN_V, STONE_BLOCK_TEXTURE_PATH, SceneState, SpaceMaterials, TNT_CRATE_TEXTURE_PATH,
         WOOD_BLOCK_TEXTURE_PATH, add_radial_box, blue_moon_orbit_camera,
-        blue_moon_second_structure_frame, blue_moon_skybox, blue_moon_structure_frame,
-        build_blue_moon_scene_with_metadata, build_cookie_world_scene_with_metadata,
-        build_galaxy_selector_scene, build_level_three_scene_with_metadata,
-        build_space_levels_scene_with_metadata, cookie_level_frame, cookie_world_orbit_camera,
-        cookie_world_skybox, galaxy_selector_orbit_camera, galaxy_selector_worlds,
-        level_three_orbit_camera, level_three_skybox, register_space_materials,
-        space_levels_orbit_camera, space_menu_skybox, space_skybox_color, space_skybox_texture,
-        sun_light_position, wrapped_uv_distance,
+        blue_moon_second_structure_frame, blue_moon_side_tower_frame, blue_moon_skybox,
+        blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
+        build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
+        build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
+        cookie_level_frame, cookie_world_orbit_camera, cookie_world_skybox,
+        galaxy_selector_orbit_camera, galaxy_selector_worlds, level_three_orbit_camera,
+        level_three_skybox, register_space_materials, space_levels_orbit_camera, space_menu_skybox,
+        space_skybox_color, space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
     use crate::{
         color::Color,
@@ -2108,13 +2188,13 @@ mod tests {
         assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
         assert_eq!(metadata.blue_moon_pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
         assert_eq!(metadata.decorative_asteroid_count, 0);
-        assert_eq!(metadata.wood_parts, 4);
+        assert_eq!(metadata.wood_parts, 14);
         assert_eq!(metadata.ice_or_metal_parts, 0);
         assert_eq!(metadata.tnt_parts, 1);
         assert_eq!(metadata.blue_moon_crater_count, 5);
         assert_eq!(metadata.blue_moon_stone_count, 9);
-        assert_eq!(metadata.blue_moon_dirt_base_parts, 3);
-        assert_eq!(metadata.blue_moon_stone_structure_parts, 6);
+        assert_eq!(metadata.blue_moon_dirt_base_parts, 4);
+        assert_eq!(metadata.blue_moon_stone_structure_parts, 7);
         assert_eq!(metadata.blue_moon_second_structure_parts, 14);
         assert_eq!(
             scene.sphere_count(),
@@ -2288,10 +2368,11 @@ mod tests {
             .world_to_local_vector(point - frame.surface_point())
     }
 
-    fn blue_moon_structure_frames() -> [RadialFrame; 2] {
+    fn blue_moon_structure_frames() -> [RadialFrame; 3] {
         [
             blue_moon_structure_frame().unwrap(),
             blue_moon_second_structure_frame().unwrap(),
+            blue_moon_side_tower_frame().unwrap(),
         ]
     }
 
@@ -2300,11 +2381,16 @@ mod tests {
         let direction = (point - BLUE_MOON_PLANET_CENTER).normalized();
         let frames = blue_moon_structure_frames();
 
-        if direction.dot(frames[0].outward()) >= direction.dot(frames[1].outward()) {
-            0
-        } else {
-            1
-        }
+        frames
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| {
+                direction
+                    .dot(left.outward())
+                    .total_cmp(&direction.dot(right.outward()))
+            })
+            .map(|(index, _)| index)
+            .unwrap()
     }
 
     fn blue_moon_structure_boxes(scene: &Scene, index: usize) -> Vec<OrientedBox> {
@@ -2475,17 +2561,20 @@ mod tests {
     }
 
     #[test]
-    fn blue_moon_first_wood_structure_sits_on_dirt_base() {
+    fn blue_moon_wood_structures_sit_on_dirt_bases() {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
         let mut dirt_parts = 0;
         let mut wood_parts = 0;
         let mut stone_parts = 0;
 
-        assert_eq!(metadata.blue_moon_dirt_base_parts, 3);
-        assert_eq!(metadata.wood_parts, 4);
-        assert_eq!(metadata.blue_moon_stone_structure_parts, 6);
+        assert_eq!(metadata.blue_moon_dirt_base_parts, 4);
+        assert_eq!(metadata.wood_parts, 14);
+        assert_eq!(metadata.blue_moon_stone_structure_parts, 7);
 
-        for box_object in blue_moon_structure_boxes(&scene, 0) {
+        for box_object in blue_moon_structure_boxes(&scene, 0)
+            .into_iter()
+            .chain(blue_moon_structure_boxes(&scene, 2))
+        {
             let surface_clearance =
                 (box_object.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
             let half_extents = box_object.half_extents();
@@ -2518,6 +2607,35 @@ mod tests {
     }
 
     #[test]
+    fn blue_moon_side_tower_is_next_to_first_without_touching() {
+        const MIN_GAP: f32 = 0.08;
+        const MAX_GAP: f32 = 0.45;
+        let (scene, _) = build_blue_moon_scene_with_metadata().unwrap();
+        let first = blue_moon_structure_boxes(&scene, 0);
+        let side = blue_moon_structure_boxes(&scene, 2);
+
+        assert!(first.len() > side.len() / 2);
+        assert!(side.len() >= 10);
+
+        let closest_gap = first
+            .iter()
+            .flat_map(|left| {
+                side.iter()
+                    .map(move |right| oriented_box_separation(left, right))
+            })
+            .fold(f32::MAX, f32::min);
+
+        assert!(
+            closest_gap >= MIN_GAP,
+            "side tower touches the first tower: gap {closest_gap}"
+        );
+        assert!(
+            closest_gap <= MAX_GAP,
+            "side tower is too far from the first tower: gap {closest_gap}"
+        );
+    }
+
+    #[test]
     fn blue_moon_second_structure_is_near_but_separate_from_first() {
         const MIN_GAP: f32 = 0.10;
         const MAX_GAP: f32 = 0.40;
@@ -2527,9 +2645,9 @@ mod tests {
 
         assert_eq!(second.len(), metadata.blue_moon_second_structure_parts);
         assert_eq!(
-            first.len() + second.len(),
+            first.len() + second.len() + blue_moon_structure_boxes(&scene, 2).len(),
             scene.oriented_box_count(),
-            "every box belongs to one of the two structures"
+            "every box belongs to one of the Luna Azul structures"
         );
 
         let closest_gap = first
