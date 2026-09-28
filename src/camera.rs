@@ -184,10 +184,17 @@ impl OrbitCamera {
         Camera::new(
             self.position(),
             self.target,
-            self.world_up,
+            self.orbital_up(),
             self.vertical_fov_degrees,
             self.aspect_ratio,
         )
+    }
+
+    fn orbital_up(self) -> Vec3 {
+        let right = Vec3::new(self.yaw.cos(), 0.0, -self.yaw.sin());
+        let forward = (self.target - self.position()).normalized();
+
+        right.cross(forward).normalized()
     }
 
     pub fn update(&mut self, input: CameraInput, delta_seconds: f32) -> bool {
@@ -626,6 +633,48 @@ mod tests {
 
         assert_near(orbit.pitch, std::f32::consts::FRAC_PI_2);
         assert!(orbit.to_camera().basis().right.length() > 0.9);
+    }
+
+    #[test]
+    fn orbit_basis_stays_continuous_when_crossing_vertical_pole() {
+        let below = OrbitCamera::new(
+            Vec3::ZERO,
+            0.4,
+            std::f32::consts::FRAC_PI_2 - 0.01,
+            6.0,
+            55.0,
+            1.0,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .to_camera()
+        .basis();
+        let at_pole = OrbitCamera::new(
+            Vec3::ZERO,
+            0.4,
+            std::f32::consts::FRAC_PI_2,
+            6.0,
+            55.0,
+            1.0,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .to_camera()
+        .basis();
+        let above = OrbitCamera::new(
+            Vec3::ZERO,
+            0.4,
+            std::f32::consts::FRAC_PI_2 + 0.01,
+            6.0,
+            55.0,
+            1.0,
+            Vec3::new(0.0, 1.0, 0.0),
+        )
+        .to_camera()
+        .basis();
+
+        assert!(below.right.dot(at_pole.right) > 0.999);
+        assert!(at_pole.right.dot(above.right) > 0.999);
+        assert!(below.up.dot(at_pole.up) > 0.999);
+        assert!(at_pole.up.dot(above.up) > 0.999);
     }
 
     #[test]
