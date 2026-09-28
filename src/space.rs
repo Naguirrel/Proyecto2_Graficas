@@ -93,6 +93,7 @@ struct SpaceMaterials {
     moon_crater_floor: usize,
     moon_stone: usize,
     moon_stone_light: usize,
+    moon_dirt: usize,
     gravity_field: usize,
     cookie_gravity_field: usize,
     level_three: usize,
@@ -125,6 +126,7 @@ pub(crate) struct SpaceSceneMetadata {
     pub level_three_gravity_field_id: Option<usize>,
     pub blue_moon_crater_count: usize,
     pub blue_moon_stone_count: usize,
+    pub blue_moon_dirt_base_parts: usize,
     pub decorative_asteroid_count: usize,
     pub cookie_chocolate_chip_count: usize,
     pub candy_count: usize,
@@ -684,6 +686,7 @@ fn add_blue_moon_world(
 ) -> Result<(), SpaceBuildError> {
     add_planet(scene, metadata, materials)?;
     add_blue_moon_surface_details(scene, metadata, materials)?;
+    add_blue_moon_wood_structure(scene, metadata, materials)?;
 
     Ok(())
 }
@@ -729,6 +732,15 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         0.0,
         1.0,
         Color::BLACK,
+    ))?;
+    let moon_dirt = scene.add_material(Material::new(
+        Color::new(0.28, 0.12, 0.07),
+        0.18,
+        16.0,
+        0.01,
+        0.0,
+        1.0,
+        Color::new(0.012, 0.004, 0.001),
     ))?;
     let gravity_field = scene.add_material(Material::new(
         Color::new(0.76, 0.96, 1.0),
@@ -909,6 +921,7 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         moon_crater_floor,
         moon_stone,
         moon_stone_light,
+        moon_dirt,
         gravity_field,
         cookie_gravity_field,
         level_three,
@@ -1092,6 +1105,52 @@ fn add_blue_moon_surface_details(
             material,
         )?)?;
         metadata.blue_moon_stone_count += 1;
+    }
+
+    Ok(())
+}
+
+fn add_blue_moon_wood_structure(
+    scene: &mut Scene,
+    metadata: &mut SpaceSceneMetadata,
+    materials: SpaceMaterials,
+) -> Result<(), SpaceBuildError> {
+    let frame = RadialFrame::from_latitude_longitude(
+        BLUE_MOON_PLANET_CENTER,
+        BLUE_MOON_PLANET_RADIUS,
+        0.40,
+        -0.18,
+    )?;
+
+    for (center, half_extents) in [
+        (Vec3::new(0.00, 0.035, 0.00), Vec3::new(0.50, 0.020, 0.30)),
+        (Vec3::new(-0.24, 0.045, -0.04), Vec3::new(0.23, 0.018, 0.23)),
+        (Vec3::new(0.26, 0.043, 0.07), Vec3::new(0.24, 0.018, 0.20)),
+    ] {
+        add_radial_box(scene, frame, center, half_extents, materials.moon_dirt)?;
+        metadata.blue_moon_dirt_base_parts += 1;
+    }
+
+    for (center, half_extents) in [
+        (
+            Vec3::new(-0.30, 0.250, -0.08),
+            Vec3::new(0.045, 0.190, 0.045),
+        ),
+        (
+            Vec3::new(0.26, 0.275, -0.08),
+            Vec3::new(0.045, 0.215, 0.045),
+        ),
+        (
+            Vec3::new(-0.02, 0.490, -0.08),
+            Vec3::new(0.360, 0.050, 0.050),
+        ),
+        (
+            Vec3::new(-0.02, 0.165, 0.12),
+            Vec3::new(0.440, 0.040, 0.040),
+        ),
+    ] {
+        add_radial_box(scene, frame, center, half_extents, materials.wood)?;
+        metadata.wood_parts += 1;
     }
 
     Ok(())
@@ -1814,15 +1873,19 @@ mod tests {
 
         assert_eq!(metadata.pig_count, 0);
         assert_eq!(metadata.decorative_asteroid_count, 0);
-        assert_eq!(metadata.wood_parts, 0);
+        assert_eq!(metadata.wood_parts, 4);
         assert_eq!(metadata.ice_or_metal_parts, 0);
         assert_eq!(metadata.tnt_parts, 0);
         assert_eq!(metadata.blue_moon_crater_count, 5);
         assert_eq!(metadata.blue_moon_stone_count, 9);
+        assert_eq!(metadata.blue_moon_dirt_base_parts, 3);
         assert_eq!(scene.sphere_count(), 1 + metadata.blue_moon_stone_count);
         assert_eq!(scene.cylinder_count(), metadata.blue_moon_crater_count);
         assert_eq!(scene.cone_count(), 0);
-        assert_eq!(scene.oriented_box_count(), 0);
+        assert_eq!(
+            scene.oriented_box_count(),
+            metadata.blue_moon_dirt_base_parts + metadata.wood_parts
+        );
     }
 
     #[test]
@@ -1834,8 +1897,11 @@ mod tests {
         assert_eq!(metadata.pig_count, 0);
         assert_eq!(
             scene.object_count(),
-            1 + metadata.blue_moon_crater_count + metadata.blue_moon_stone_count,
-            "the blue moon level should contain only the textured planet, recessed craters, and stones"
+            1 + metadata.blue_moon_crater_count
+                + metadata.blue_moon_stone_count
+                + metadata.blue_moon_dirt_base_parts
+                + metadata.wood_parts,
+            "the blue moon level should contain only the textured planet, surface details, dirt base, and first wooden structure"
         );
     }
 
@@ -1950,6 +2016,39 @@ mod tests {
             assert!(surface_clearance > crater.half_height());
             assert!(surface_clearance < 0.025);
         }
+    }
+
+    #[test]
+    fn blue_moon_first_wood_structure_sits_on_dirt_base() {
+        let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
+        let mut dirt_parts = 0;
+        let mut wood_parts = 0;
+
+        assert_eq!(metadata.blue_moon_dirt_base_parts, 3);
+        assert_eq!(metadata.wood_parts, 4);
+
+        for box_object in scene.oriented_boxes() {
+            let surface_clearance =
+                (box_object.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
+            let half_extents = box_object.half_extents();
+
+            assert!(surface_clearance > half_extents.y);
+
+            if half_extents.y <= 0.020 {
+                dirt_parts += 1;
+                assert!(surface_clearance < 0.085);
+                assert!(half_extents.x >= 0.20);
+                assert!(half_extents.z >= 0.20);
+            } else {
+                wood_parts += 1;
+                assert!(surface_clearance >= 0.160);
+                assert!(half_extents.x <= 0.45);
+                assert!(half_extents.z <= 0.06);
+            }
+        }
+
+        assert_eq!(dirt_parts, metadata.blue_moon_dirt_base_parts);
+        assert_eq!(wood_parts, metadata.wood_parts);
     }
 
     #[test]
