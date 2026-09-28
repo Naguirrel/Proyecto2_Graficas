@@ -16,8 +16,8 @@ const HEIGHT: usize = 600;
 const INTERACTIVE_SCALE: f32 = 0.5;
 const LEVEL_FULL_MAX_WIDTH: usize = 1280;
 const LEVEL_FULL_MAX_HEIGHT: usize = 720;
-const LEVEL_INTERACTIVE_MAX_WIDTH: usize = 640;
-const LEVEL_INTERACTIVE_MAX_HEIGHT: usize = 360;
+const LEVEL_INTERACTIVE_MAX_WIDTH: usize = 480;
+const LEVEL_INTERACTIVE_MAX_HEIGHT: usize = 270;
 const FULL_QUALITY_DELAY: Duration = Duration::from_millis(180);
 const PRINT_RENDER_TIMES: bool = true;
 const LEFT_CLICK_DRAG_THRESHOLD: f32 = 5.0;
@@ -1431,7 +1431,7 @@ mod tests {
                 1920,
                 1080,
             ),
-            (640, 360)
+            (480, 270)
         );
     }
 

@@ -5,8 +5,6 @@ const ORBIT_ZOOM_SPEED: f32 = 5.0;
 const MOUSE_SCROLL_ZOOM_STEP: f32 = 3.0;
 const MOUSE_DRAG_ROTATION_STEP: f32 = 0.006;
 const MAX_ORBIT_DELTA_SECONDS: f32 = 0.1;
-const MIN_ORBIT_PITCH: f32 = -std::f32::consts::FRAC_PI_2 + 0.05;
-const MAX_ORBIT_PITCH: f32 = std::f32::consts::FRAC_PI_2 - 0.05;
 const MIN_ORBIT_DISTANCE: f32 = 1.0;
 const MAX_ORBIT_DISTANCE: f32 = 30.0;
 const DEFAULT_ORBIT_DISTANCE: f32 = 7.3;
@@ -73,7 +71,7 @@ impl OrbitCameraState {
         Self {
             target: finite_vec3_or(target, Vec3::ZERO),
             yaw: normalize_yaw(yaw),
-            pitch: clamp_pitch(pitch),
+            pitch: sanitize_pitch(pitch),
             distance: clamp_distance(distance),
         }
     }
@@ -244,7 +242,7 @@ impl OrbitCamera {
                 + yaw_direction as f32 * rotation_step
                 + mouse_delta_x * MOUSE_DRAG_ROTATION_STEP,
         );
-        self.pitch = clamp_pitch(
+        self.pitch = sanitize_pitch(
             self.pitch + pitch_direction as f32 * rotation_step
                 - mouse_delta_y * MOUSE_DRAG_ROTATION_STEP,
         );
@@ -286,8 +284,8 @@ fn clamp_distance(distance: f32) -> f32 {
     finite_or(distance, DEFAULT_ORBIT_DISTANCE).clamp(MIN_ORBIT_DISTANCE, MAX_ORBIT_DISTANCE)
 }
 
-fn clamp_pitch(pitch: f32) -> f32 {
-    finite_or(pitch, 0.0).clamp(MIN_ORBIT_PITCH, MAX_ORBIT_PITCH)
+fn sanitize_pitch(pitch: f32) -> f32 {
+    finite_or(pitch, 0.0)
 }
 
 fn normalize_yaw(yaw: f32) -> f32 {
@@ -343,10 +341,7 @@ fn normalized_pixel_coordinates(
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Camera, CameraInput, MAX_ORBIT_DISTANCE, MAX_ORBIT_PITCH, MIN_ORBIT_DISTANCE,
-        MIN_ORBIT_PITCH, OrbitCamera,
-    };
+    use super::{Camera, CameraInput, MAX_ORBIT_DISTANCE, MIN_ORBIT_DISTANCE, OrbitCamera};
     use crate::math::Vec3;
 
     const EPSILON: f32 = 0.0001;
@@ -618,18 +613,18 @@ mod tests {
     }
 
     #[test]
-    fn pitch_limit_prevents_degeneracy() {
+    fn vertical_orbit_accepts_poles_without_degeneracy() {
         let orbit = OrbitCamera::new(
             Vec3::ZERO,
             0.0,
-            10.0,
+            std::f32::consts::FRAC_PI_2,
             6.0,
             55.0,
             1.0,
             Vec3::new(0.0, 1.0, 0.0),
         );
 
-        assert_near(orbit.pitch, MAX_ORBIT_PITCH);
+        assert_near(orbit.pitch, std::f32::consts::FRAC_PI_2);
         assert!(orbit.to_camera().basis().right.length() > 0.9);
     }
 
@@ -798,11 +793,11 @@ mod tests {
     }
 
     #[test]
-    fn pitch_update_respects_limits() {
+    fn pitch_update_can_cross_previous_pole_limits() {
         let mut high = OrbitCamera::new(
             Vec3::ZERO,
             0.0,
-            MAX_ORBIT_PITCH - 0.01,
+            std::f32::consts::FRAC_PI_2 - 0.01,
             6.0,
             55.0,
             1.0,
@@ -811,7 +806,7 @@ mod tests {
         let mut low = OrbitCamera::new(
             Vec3::ZERO,
             0.0,
-            MIN_ORBIT_PITCH + 0.01,
+            -std::f32::consts::FRAC_PI_2 + 0.01,
             6.0,
             55.0,
             1.0,
@@ -833,8 +828,8 @@ mod tests {
             1.0,
         );
 
-        assert_near(high.pitch, MAX_ORBIT_PITCH);
-        assert_near(low.pitch, MIN_ORBIT_PITCH);
+        assert!(high.pitch > std::f32::consts::FRAC_PI_2);
+        assert!(low.pitch < -std::f32::consts::FRAC_PI_2);
     }
 
     #[test]
