@@ -45,6 +45,8 @@ const SKYBOX_ASTEROID_B_V: f32 = 0.455;
 const SKYBOX_ASTEROID_C_U: f32 = 0.425;
 const SKYBOX_ASTEROID_C_V: f32 = 0.730;
 const BLUE_MOON_PLANET_TEXTURE_PATH: &str = "assets/textures/blue_moon_planet.ppm";
+const WOOD_BLOCK_TEXTURE_PATH: &str = "assets/textures/space_wood_block.ppm";
+const STONE_BLOCK_TEXTURE_PATH: &str = "assets/textures/space_stone_block.ppm";
 const TNT_CRATE_TEXTURE_PATH: &str = "assets/textures/tnt_crate.ppm";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -709,6 +711,8 @@ fn add_blue_moon_world(
 
 fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBuildError> {
     let moon_texture = scene.add_texture(Texture::from_ppm_file(BLUE_MOON_PLANET_TEXTURE_PATH)?);
+    let wood_block_texture = scene.add_texture(Texture::from_ppm_file(WOOD_BLOCK_TEXTURE_PATH)?);
+    let stone_block_texture = scene.add_texture(Texture::from_ppm_file(STONE_BLOCK_TEXTURE_PATH)?);
     let tnt_crate_texture = scene.add_texture(Texture::from_ppm_file(TNT_CRATE_TEXTURE_PATH)?);
 
     let moon = scene.add_material(
@@ -732,15 +736,18 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         1.0,
         Color::new(0.005, 0.010, 0.008),
     ))?;
-    let moon_stone = scene.add_material(Material::new(
-        Color::new(0.42, 0.53, 0.49),
-        0.20,
-        22.0,
-        0.02,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
+    let moon_stone = scene.add_material(
+        Material::new(
+            Color::new(0.42, 0.53, 0.49),
+            0.20,
+            22.0,
+            0.02,
+            0.0,
+            1.0,
+            Color::BLACK,
+        )
+        .with_texture(stone_block_texture, Vec2::new(1.55, 1.55), WrapMode::Repeat),
+    )?;
     let moon_stone_light = scene.add_material(Material::new(
         Color::new(0.58, 0.68, 0.60),
         0.22,
@@ -849,15 +856,18 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         1.0,
         Color::BLACK,
     ))?;
-    let wood = scene.add_material(Material::new(
-        Color::new(0.58, 0.34, 0.16),
-        0.25,
-        24.0,
-        0.02,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
+    let wood = scene.add_material(
+        Material::new(
+            Color::new(0.58, 0.34, 0.16),
+            0.25,
+            24.0,
+            0.02,
+            0.0,
+            1.0,
+            Color::BLACK,
+        )
+        .with_texture(wood_block_texture, Vec2::new(2.4, 1.1), WrapMode::Repeat),
+    )?;
     let ice = scene.add_material(Material::new(
         Color::new(0.66, 0.92, 1.0),
         0.55,
@@ -1829,19 +1839,26 @@ mod tests {
         COOKIE_PLANET_RADIUS, GALAXY_SELECTOR_BLUE_MOON_CENTER, GALAXY_SELECTOR_COOKIE_CENTER,
         GALAXY_SELECTOR_LEVEL_THREE_CENTER, LEVEL_THREE_PLANET_CENTER, LEVEL_THREE_PLANET_RADIUS,
         PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U,
-        SPACE_SUN_V, SceneState, SpaceMaterials, TNT_CRATE_TEXTURE_PATH, add_radial_box,
-        blue_moon_orbit_camera, blue_moon_second_structure_frame, blue_moon_skybox,
-        blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
-        build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
-        build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
-        cookie_level_frame, cookie_world_orbit_camera, cookie_world_skybox,
-        galaxy_selector_orbit_camera, galaxy_selector_worlds, level_three_orbit_camera,
-        level_three_skybox, register_space_materials, space_levels_orbit_camera, space_menu_skybox,
-        space_skybox_color, space_skybox_texture, sun_light_position, wrapped_uv_distance,
+        SPACE_SUN_V, STONE_BLOCK_TEXTURE_PATH, SceneState, SpaceMaterials, TNT_CRATE_TEXTURE_PATH,
+        WOOD_BLOCK_TEXTURE_PATH, add_radial_box, blue_moon_orbit_camera,
+        blue_moon_second_structure_frame, blue_moon_skybox, blue_moon_structure_frame,
+        build_blue_moon_scene_with_metadata, build_cookie_world_scene_with_metadata,
+        build_galaxy_selector_scene, build_level_three_scene_with_metadata,
+        build_space_levels_scene_with_metadata, cookie_level_frame, cookie_world_orbit_camera,
+        cookie_world_skybox, galaxy_selector_orbit_camera, galaxy_selector_worlds,
+        level_three_orbit_camera, level_three_skybox, register_space_materials,
+        space_levels_orbit_camera, space_menu_skybox, space_skybox_color, space_skybox_texture,
+        sun_light_position, wrapped_uv_distance,
     };
     use crate::{
-        color::Color, material::Material, math::Vec3, oriented_box::OrientedBox,
-        radial::RadialFrame, ray::Ray, scene::Scene, texture::Texture,
+        color::Color,
+        material::Material,
+        math::Vec3,
+        oriented_box::OrientedBox,
+        radial::RadialFrame,
+        ray::Ray,
+        scene::Scene,
+        texture::{Texture, WrapMode},
     };
 
     fn color_delta(left: Color, right: Color) -> f32 {
@@ -2571,6 +2588,38 @@ mod tests {
 
         assert!(texture.width() > 0);
         assert!(texture.height() > 0);
+    }
+
+    #[test]
+    fn block_textures_load_from_assets() {
+        for path in [WOOD_BLOCK_TEXTURE_PATH, STONE_BLOCK_TEXTURE_PATH] {
+            let texture = Texture::from_ppm_file(path).unwrap();
+            let first = texture.pixel(0, 0).unwrap();
+            let middle = texture
+                .pixel(texture.width() / 2, texture.height() / 2)
+                .unwrap();
+
+            assert_eq!(texture.width(), 32);
+            assert_eq!(texture.height(), 32);
+            assert_ne!(first, middle);
+        }
+    }
+
+    #[test]
+    fn wood_and_stone_materials_use_block_textures() {
+        let mut scene = Scene::new();
+        let SpaceMaterials {
+            wood, moon_stone, ..
+        } = register_space_materials(&mut scene).unwrap();
+        let wood_material = scene.material(wood).unwrap();
+        let stone_material = scene.material(moon_stone).unwrap();
+
+        assert!(scene.texture(wood_material.texture_id.unwrap()).is_some());
+        assert!(scene.texture(stone_material.texture_id.unwrap()).is_some());
+        assert_eq!(wood_material.wrap_mode, WrapMode::Repeat);
+        assert_eq!(stone_material.wrap_mode, WrapMode::Repeat);
+        assert!(wood_material.uv_scale.u > 1.0);
+        assert!(stone_material.uv_scale.u > 1.0);
     }
 
     #[test]
