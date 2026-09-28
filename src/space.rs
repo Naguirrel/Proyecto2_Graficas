@@ -49,6 +49,7 @@ const BLUE_MOON_PLANET_TEXTURE_PATH: &str = "assets/textures/blue_moon_planet.pp
 const WOOD_BLOCK_TEXTURE_PATH: &str = "assets/textures/space_wood_block.ppm";
 const STONE_BLOCK_TEXTURE_PATH: &str = "assets/textures/space_stone_block.ppm";
 const TNT_CRATE_TEXTURE_PATH: &str = "assets/textures/tnt_crate.ppm";
+const DANGER_ZONE_SKYBOX_TEXTURE_PATH: &str = "assets/textures/dangerzone_theme_parallax_1.ppm";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SceneState {
@@ -399,9 +400,9 @@ pub fn cookie_world_skybox() -> Result<Skybox, TextureError> {
 }
 
 pub fn level_three_skybox() -> Result<Skybox, TextureError> {
-    Ok(Skybox::new(space_skybox_texture()?)
+    Ok(Skybox::new(danger_zone_skybox_texture()?)
         .with_intensity(1.08)
-        .with_horizontal_rotation(0.66))
+        .with_horizontal_rotation(0.0))
 }
 
 pub fn angry_birds_space_skybox() -> Result<Skybox, TextureError> {
@@ -421,6 +422,10 @@ fn space_skybox_texture() -> Result<Texture, TextureError> {
     }
 
     Texture::new(SPACE_SKYBOX_WIDTH, SPACE_SKYBOX_HEIGHT, pixels)
+}
+
+fn danger_zone_skybox_texture() -> Result<Texture, TextureError> {
+    Texture::from_ppm_file(DANGER_ZONE_SKYBOX_TEXTURE_PATH)
 }
 
 fn space_skybox_color(u: f32, v: f32) -> Color {
@@ -1721,10 +1726,10 @@ mod tests {
         blue_moon_slingshot_frame, blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
         build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
         build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
-        cookie_world_orbit_camera, cookie_world_skybox, galaxy_selector_orbit_camera,
-        galaxy_selector_worlds, level_three_orbit_camera, level_three_skybox,
-        register_space_materials, space_levels_orbit_camera, space_menu_skybox, space_skybox_color,
-        space_skybox_texture, sun_light_position, wrapped_uv_distance,
+        cookie_world_orbit_camera, cookie_world_skybox, danger_zone_skybox_texture,
+        galaxy_selector_orbit_camera, galaxy_selector_worlds, level_three_orbit_camera,
+        level_three_skybox, register_space_materials, space_levels_orbit_camera, space_menu_skybox,
+        space_skybox_color, space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
     use crate::{
         color::Color,
@@ -1892,6 +1897,22 @@ mod tests {
     }
 
     #[test]
+    fn level_three_skybox_uses_danger_zone_background_asset() {
+        let texture = danger_zone_skybox_texture().unwrap();
+        let red_background = texture
+            .pixel(texture.width() - 1, texture.height() - 1)
+            .unwrap();
+        let pig_planet = texture.pixel(100, 100).unwrap();
+
+        assert_eq!(texture.width(), 666);
+        assert_eq!(texture.height(), 547);
+        assert!(red_background.r > red_background.g * 2.0);
+        assert!(red_background.r > red_background.b);
+        assert!(pig_planet.r > pig_planet.g);
+        assert!(pig_planet.r > pig_planet.b);
+    }
+
+    #[test]
     fn spatial_scenes_use_separate_space_skybox_presets() {
         let selector = build_galaxy_selector_scene().unwrap();
         let (blue, _) = build_blue_moon_scene_with_metadata().unwrap();
@@ -1902,6 +1923,7 @@ mod tests {
         let blue_preset = blue_moon_skybox().unwrap();
         let cookie_preset = cookie_world_skybox().unwrap();
         let level_three_preset = level_three_skybox().unwrap();
+        let danger_zone_texture = danger_zone_skybox_texture().unwrap();
 
         assert_eq!(menu_preset.texture().width(), super::SPACE_SKYBOX_WIDTH);
         assert_eq!(menu_preset.texture().height(), super::SPACE_SKYBOX_HEIGHT);
@@ -1914,11 +1936,11 @@ mod tests {
             cookie_preset.horizontal_rotation()
         );
         assert_ne!(
-            cookie_preset.horizontal_rotation(),
-            level_three_preset.horizontal_rotation()
+            cookie_preset.texture().width(),
+            level_three_preset.texture().width()
         );
 
-        for scene in [&selector, &blue, &cookie, &level_three, &combined] {
+        for scene in [&selector, &blue, &cookie, &combined] {
             let skybox = scene.skybox().unwrap();
 
             assert_eq!(skybox.texture().width(), super::SPACE_SKYBOX_WIDTH);
@@ -1926,6 +1948,15 @@ mod tests {
             assert!(skybox.intensity() > 1.0);
         }
 
+        assert_eq!(
+            level_three.skybox().unwrap().texture().width(),
+            danger_zone_texture.width()
+        );
+        assert_eq!(
+            level_three.skybox().unwrap().texture().height(),
+            danger_zone_texture.height()
+        );
+        assert!(level_three.skybox().unwrap().intensity() > 1.0);
         assert_eq!(
             selector.skybox().unwrap().horizontal_rotation(),
             menu_preset.horizontal_rotation()
