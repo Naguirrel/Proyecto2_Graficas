@@ -28,7 +28,7 @@ pub const LEVEL_THREE_PLANET_CENTER: Vec3 = Vec3::new(-0.35, 0.05, 0.10);
 pub const LEVEL_THREE_PLANET_RADIUS: f32 = 1.70;
 pub const SPACE_SUN_DIRECTION: Vec3 = Vec3::new(-0.76, 0.54, -0.36);
 pub const BLUE_MOON_LEVEL_PIG_COUNT: usize = 6;
-pub const COOKIE_LEVEL_PIG_COUNT: usize = 2;
+pub const COOKIE_LEVEL_PIG_COUNT: usize = 0;
 pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-2.85, 0.26, 0.0);
 pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 0.98;
 pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(2.65, -0.20, -0.28);
@@ -108,17 +108,9 @@ struct SpaceMaterials {
     selector_locked_moon: usize,
     selector_locked_cookie: usize,
     selector_locked_level_three: usize,
-    asteroid: usize,
     cookie: usize,
-    chocolate: usize,
     wood: usize,
-    ice: usize,
-    metal: usize,
-    tnt: usize,
     tnt_crate: usize,
-    candy_red: usize,
-    candy_blue: usize,
-    candy_yellow: usize,
     pig: usize,
     snout: usize,
     eye: usize,
@@ -142,13 +134,8 @@ pub(crate) struct SpaceSceneMetadata {
     pub blue_moon_slingshot_wood_parts: usize,
     pub blue_moon_chuck_count: usize,
     pub blue_moon_atmosphere_id: Option<usize>,
-    pub decorative_asteroid_count: usize,
-    pub cookie_chocolate_chip_count: usize,
-    pub candy_count: usize,
     pub pig_count: usize,
-    pub cookie_pig_count: usize,
     pub wood_parts: usize,
-    pub ice_or_metal_parts: usize,
     pub tnt_parts: usize,
 }
 
@@ -837,29 +824,11 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         1.0,
         Color::BLACK,
     ))?;
-    let asteroid = scene.add_material(Material::new(
-        Color::new(0.36, 0.18, 0.10),
-        0.18,
-        16.0,
-        0.02,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
     let cookie = scene.add_material(Material::new(
         Color::new(0.86, 0.56, 0.26),
         0.18,
         22.0,
         0.03,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let chocolate = scene.add_material(Material::new(
-        Color::new(0.31, 0.14, 0.06),
-        0.22,
-        18.0,
-        0.01,
         0.0,
         1.0,
         Color::BLACK,
@@ -876,60 +845,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         )
         .with_texture(wood_block_texture, Vec2::new(2.4, 1.1), WrapMode::Repeat),
     )?;
-    let ice = scene.add_material(Material::new(
-        Color::new(0.66, 0.92, 1.0),
-        0.55,
-        72.0,
-        0.18,
-        0.28,
-        1.31,
-        Color::BLACK,
-    ))?;
-    let metal = scene.add_material(Material::new(
-        Color::new(0.78, 0.82, 0.86),
-        0.75,
-        96.0,
-        0.48,
-        0.0,
-        1.0,
-        Color::BLACK,
-    ))?;
-    let tnt = scene.add_material(Material::new(
-        Color::new(0.95, 0.08, 0.05),
-        0.20,
-        18.0,
-        0.02,
-        0.0,
-        1.0,
-        Color::new(0.08, 0.0, 0.0),
-    ))?;
-    let candy_red = scene.add_material(Material::new(
-        Color::new(1.0, 0.10, 0.22),
-        0.38,
-        42.0,
-        0.08,
-        0.0,
-        1.0,
-        Color::new(0.04, 0.0, 0.01),
-    ))?;
-    let candy_blue = scene.add_material(Material::new(
-        Color::new(0.06, 0.62, 1.0),
-        0.38,
-        42.0,
-        0.08,
-        0.0,
-        1.0,
-        Color::new(0.0, 0.02, 0.05),
-    ))?;
-    let candy_yellow = scene.add_material(Material::new(
-        Color::new(1.0, 0.86, 0.12),
-        0.32,
-        36.0,
-        0.05,
-        0.0,
-        1.0,
-        Color::new(0.05, 0.035, 0.0),
-    ))?;
     let pig = scene.add_material(Material::new(
         Color::new(0.44, 0.86, 0.32),
         0.25,
@@ -976,17 +891,9 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         selector_locked_moon,
         selector_locked_cookie,
         selector_locked_level_three,
-        asteroid,
         cookie,
-        chocolate,
         wood,
-        ice,
-        metal,
-        tnt,
         tnt_crate,
-        candy_red,
-        candy_blue,
-        candy_yellow,
         pig,
         snout,
         eye,
@@ -1409,11 +1316,6 @@ fn add_cookie_level(
     )?)?;
     metadata.cookie_planet_id = Some(planet_id);
 
-    add_cookie_chocolate_chips(scene, metadata, materials)?;
-    add_cookie_enemy_construction(scene, metadata, materials)?;
-    add_cookie_pigs(scene, metadata, materials)?;
-    add_cookie_candy(scene, metadata, materials)?;
-
     let gravity_id = scene.object_count();
     scene.add_sphere(Sphere::new(
         COOKIE_PLANET_CENTER,
@@ -1438,21 +1340,6 @@ fn add_level_three_placeholder(
     )?)?;
     metadata.level_three_planet_id = Some(planet_id);
 
-    for (offset, radius, material_id) in [
-        (Vec3::new(-2.20, 0.42, -0.32), 0.22, materials.asteroid),
-        (Vec3::new(-1.55, -0.34, 0.54), 0.16, materials.metal),
-        (Vec3::new(1.86, 0.30, -0.28), 0.20, materials.asteroid),
-        (Vec3::new(2.34, -0.42, 0.36), 0.13, materials.ice),
-        (Vec3::new(0.62, 1.78, -0.22), 0.15, materials.candy_blue),
-    ] {
-        scene.add_sphere(Sphere::new(
-            LEVEL_THREE_PLANET_CENTER + offset,
-            radius,
-            material_id,
-        )?)?;
-        metadata.decorative_asteroid_count += 1;
-    }
-
     let gravity_id = scene.object_count();
     scene.add_sphere(Sphere::new(
         LEVEL_THREE_PLANET_CENTER,
@@ -1460,201 +1347,6 @@ fn add_level_three_placeholder(
         materials.level_three_gravity_field,
     )?)?;
     metadata.level_three_gravity_field_id = Some(gravity_id);
-
-    Ok(())
-}
-
-fn add_cookie_chocolate_chips(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    for (latitude, longitude, radius) in [
-        (0.20, 1.46, 0.18),
-        (-0.12, 1.78, 0.14),
-        (0.46, 1.18, 0.12),
-        (-0.48, 1.26, 0.13),
-        (0.08, 2.20, 0.11),
-        (0.60, 2.04, 0.10),
-        (-0.64, 1.92, 0.09),
-        (0.30, -2.70, 0.12),
-        (-0.26, -2.42, 0.10),
-    ] {
-        let frame = RadialFrame::from_latitude_longitude(
-            COOKIE_PLANET_CENTER,
-            COOKIE_PLANET_RADIUS,
-            latitude,
-            longitude,
-        )?;
-        add_radial_cylinder(
-            scene,
-            frame,
-            Vec3::new(0.0, 0.026, 0.0),
-            radius,
-            0.020,
-            materials.chocolate,
-        )?;
-        metadata.cookie_chocolate_chip_count += 1;
-    }
-
-    Ok(())
-}
-
-fn add_cookie_enemy_construction(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    let frame = cookie_level_frame()?;
-
-    for (center, half_extents, material_id) in [
-        (
-            Vec3::new(-0.46, 0.22, -0.12),
-            Vec3::new(0.06, 0.22, 0.06),
-            materials.wood,
-        ),
-        (
-            Vec3::new(0.18, 0.28, -0.12),
-            Vec3::new(0.06, 0.28, 0.06),
-            materials.wood,
-        ),
-        (
-            Vec3::new(-0.14, 0.55, -0.12),
-            Vec3::new(0.48, 0.05, 0.05),
-            materials.wood,
-        ),
-        (
-            Vec3::new(-0.14, 0.88, -0.12),
-            Vec3::new(0.50, 0.05, 0.05),
-            materials.metal,
-        ),
-        (
-            Vec3::new(-0.46, 0.62, -0.12),
-            Vec3::new(0.15, 0.13, 0.14),
-            materials.ice,
-        ),
-        (
-            Vec3::new(0.18, 0.68, -0.12),
-            Vec3::new(0.14, 0.14, 0.14),
-            materials.ice,
-        ),
-        (
-            Vec3::new(0.48, 0.20, 0.22),
-            Vec3::new(0.13, 0.13, 0.13),
-            materials.tnt,
-        ),
-    ] {
-        add_radial_box(scene, frame, center, half_extents, material_id)?;
-        if material_id == materials.wood {
-            metadata.wood_parts += 1;
-        } else if material_id == materials.tnt {
-            metadata.tnt_parts += 1;
-        } else {
-            metadata.ice_or_metal_parts += 1;
-        }
-    }
-
-    Ok(())
-}
-
-fn add_cookie_pigs(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    let frame = cookie_level_frame()?;
-
-    add_space_pig(scene, frame, -0.46, -0.12, 0.16, materials)?;
-    add_space_pig(scene, frame, 0.20, -0.12, 0.15, materials)?;
-    metadata.pig_count += COOKIE_LEVEL_PIG_COUNT;
-    metadata.cookie_pig_count = COOKIE_LEVEL_PIG_COUNT;
-
-    Ok(())
-}
-
-fn add_cookie_candy(
-    scene: &mut Scene,
-    metadata: &mut SpaceSceneMetadata,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    for (normal, local, radius, material_id) in [
-        (
-            Vec3::new(0.35, 0.35, 1.0),
-            Vec3::new(-0.76, 0.18, 0.22),
-            0.13,
-            materials.candy_red,
-        ),
-        (
-            Vec3::new(-0.15, 0.62, 1.0),
-            Vec3::new(0.58, 0.16, -0.18),
-            0.12,
-            materials.candy_blue,
-        ),
-        (
-            Vec3::new(0.82, -0.10, 0.55),
-            Vec3::new(0.32, 0.20, 0.36),
-            0.14,
-            materials.candy_yellow,
-        ),
-    ] {
-        let frame = RadialFrame::from_normal(COOKIE_PLANET_CENTER, COOKIE_PLANET_RADIUS, normal)?;
-        scene.add_sphere(Sphere::new(
-            frame.local_to_world(local),
-            radius,
-            material_id,
-        )?)?;
-        metadata.candy_count += 1;
-    }
-
-    let lollipop_frame = RadialFrame::from_normal(
-        COOKIE_PLANET_CENTER,
-        COOKIE_PLANET_RADIUS,
-        Vec3::new(-0.45, 0.22, 1.0),
-    )?;
-    add_radial_cylinder(
-        scene,
-        lollipop_frame,
-        Vec3::new(0.0, 0.22, 0.36),
-        0.022,
-        0.26,
-        materials.ice,
-    )?;
-    scene.add_sphere(Sphere::new(
-        lollipop_frame.position(0.0, 0.52, 0.36),
-        0.18,
-        materials.candy_red,
-    )?)?;
-    scene.add_sphere(Sphere::new(
-        lollipop_frame.position(0.07, 0.58, 0.41),
-        0.07,
-        materials.candy_yellow,
-    )?)?;
-    metadata.candy_count += 2;
-    metadata.ice_or_metal_parts += 1;
-
-    let wrapped_frame = RadialFrame::from_normal(
-        COOKIE_PLANET_CENTER,
-        COOKIE_PLANET_RADIUS,
-        Vec3::new(0.85, 0.40, 0.75),
-    )?;
-    add_radial_cylinder(
-        scene,
-        wrapped_frame,
-        Vec3::new(0.0, 0.22, -0.30),
-        0.12,
-        0.055,
-        materials.candy_blue,
-    )?;
-    for x in [-0.16, 0.16] {
-        scene.add_cone(Cone::new(
-            wrapped_frame.position(x, 0.22, -0.30),
-            0.07,
-            0.09,
-            wrapped_frame.basis(),
-            materials.candy_yellow,
-        )?)?;
-    }
-    metadata.candy_count += 3;
 
     Ok(())
 }
@@ -1738,23 +1430,6 @@ fn add_sun_key_light(scene: &mut Scene, intensity: f32) {
 
 fn sun_light_position(distance: f32) -> Vec3 {
     SPACE_SUN_DIRECTION.normalized() * distance
-}
-
-fn add_space_pig(
-    scene: &mut Scene,
-    frame: RadialFrame,
-    tangent_x: f32,
-    tangent_z: f32,
-    radius: f32,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    add_space_pig_at(
-        scene,
-        frame,
-        Vec3::new(tangent_x, radius + 0.04, tangent_z),
-        radius,
-        materials,
-    )
 }
 
 fn add_space_pig_at(
@@ -2031,15 +1706,6 @@ fn blue_moon_slingshot_frame() -> Result<RadialFrame, SpaceBuildError> {
     )?)
 }
 
-fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
-    Ok(RadialFrame::from_latitude_longitude(
-        COOKIE_PLANET_CENTER,
-        COOKIE_PLANET_RADIUS,
-        0.20,
-        1.50,
-    )?)
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2055,10 +1721,10 @@ mod tests {
         blue_moon_slingshot_frame, blue_moon_structure_frame, build_blue_moon_scene_with_metadata,
         build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
         build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
-        cookie_level_frame, cookie_world_orbit_camera, cookie_world_skybox,
-        galaxy_selector_orbit_camera, galaxy_selector_worlds, level_three_orbit_camera,
-        level_three_skybox, register_space_materials, space_levels_orbit_camera, space_menu_skybox,
-        space_skybox_color, space_skybox_texture, sun_light_position, wrapped_uv_distance,
+        cookie_world_orbit_camera, cookie_world_skybox, galaxy_selector_orbit_camera,
+        galaxy_selector_worlds, level_three_orbit_camera, level_three_skybox,
+        register_space_materials, space_levels_orbit_camera, space_menu_skybox, space_skybox_color,
+        space_skybox_texture, sun_light_position, wrapped_uv_distance,
     };
     use crate::{
         color::Color,
@@ -2318,9 +1984,7 @@ mod tests {
 
         assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
         assert_eq!(metadata.blue_moon_pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
-        assert_eq!(metadata.decorative_asteroid_count, 0);
         assert_eq!(metadata.wood_parts, 19);
-        assert_eq!(metadata.ice_or_metal_parts, 0);
         assert_eq!(metadata.tnt_parts, 1);
         assert_eq!(metadata.blue_moon_crater_count, 5);
         assert_eq!(metadata.blue_moon_stone_count, 9);
@@ -2978,14 +2642,14 @@ mod tests {
         scene
             .add_material(Material::diffuse(crate::color::Color::WHITE))
             .unwrap();
-        let frame = cookie_level_frame().unwrap();
+        let frame = blue_moon_structure_frame().unwrap();
         let half_extents = Vec3::new(0.1, 0.2, 0.1);
         let local_center = Vec3::new(0.0, half_extents.y + 0.05, 0.0);
 
         add_radial_box(&mut scene, frame, local_center, half_extents, 0).unwrap();
 
         let box_center = scene.objects()[0].as_oriented_box().unwrap().center();
-        assert!((box_center - COOKIE_PLANET_CENTER).length() > COOKIE_PLANET_RADIUS);
+        assert!((box_center - BLUE_MOON_PLANET_CENTER).length() > BLUE_MOON_PLANET_RADIUS);
         assert!(wood < material_scene.materials().len());
     }
 
@@ -3039,18 +2703,24 @@ mod tests {
         let cookie = scene.objects()[metadata.cookie_planet_id.unwrap()]
             .as_sphere()
             .unwrap();
+        let gravity = scene.objects()[metadata.cookie_gravity_field_id.unwrap()]
+            .as_sphere()
+            .unwrap();
 
         assert_eq!(cookie.center(), COOKIE_PLANET_CENTER);
         assert_eq!(cookie.radius(), COOKIE_PLANET_RADIUS);
-        assert_eq!(metadata.cookie_pig_count, COOKIE_LEVEL_PIG_COUNT);
+        assert_eq!(gravity.center(), COOKIE_PLANET_CENTER);
+        assert!(gravity.radius() > cookie.radius());
         assert_eq!(metadata.pig_count, COOKIE_LEVEL_PIG_COUNT);
-        assert!(metadata.cookie_chocolate_chip_count >= 8);
-        assert!(metadata.candy_count >= 6);
-        assert!(metadata.wood_parts >= 3);
-        assert!(metadata.ice_or_metal_parts >= 2);
-        assert!(metadata.tnt_parts >= 1);
+        assert_eq!(metadata.wood_parts, 0);
+        assert_eq!(metadata.tnt_parts, 0);
         assert!(metadata.cookie_gravity_field_id.is_some());
         assert!(metadata.planet_id.is_none());
+        assert_eq!(scene.object_count(), 2);
+        assert_eq!(scene.sphere_count(), 2);
+        assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
         assert!(scene.skybox().is_some());
     }
 
@@ -3068,8 +2738,11 @@ mod tests {
         assert_eq!(planet.radius(), LEVEL_THREE_PLANET_RADIUS);
         assert_eq!(gravity.center(), LEVEL_THREE_PLANET_CENTER);
         assert!(gravity.radius() > planet.radius());
-        assert!(metadata.decorative_asteroid_count >= 5);
-        assert!(scene.object_count() >= 7);
+        assert_eq!(scene.object_count(), 2);
+        assert_eq!(scene.sphere_count(), 2);
+        assert_eq!(scene.cylinder_count(), 0);
+        assert_eq!(scene.cone_count(), 0);
+        assert_eq!(scene.oriented_box_count(), 0);
         assert!(scene.skybox().is_some());
         assert!(scene.lights().len() >= 5);
     }
@@ -3089,26 +2762,19 @@ mod tests {
     }
 
     #[test]
-    fn space_levels_scene_contains_cookie_and_blue_moon_pigs() {
+    fn space_levels_scene_contains_only_blue_moon_pigs() {
         let (_, metadata) = build_space_levels_scene_with_metadata().unwrap();
 
-        assert_eq!(metadata.cookie_pig_count, COOKIE_LEVEL_PIG_COUNT);
         assert_eq!(metadata.blue_moon_pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
-        assert_eq!(
-            metadata.pig_count,
-            COOKIE_LEVEL_PIG_COUNT + BLUE_MOON_LEVEL_PIG_COUNT
-        );
+        assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
     }
 
     #[test]
-    fn cookie_level_has_sweet_readable_details() {
-        let (scene, metadata) = build_space_levels_scene_with_metadata().unwrap();
+    fn cookie_level_stays_clean_for_manual_layout_pass() {
+        let (scene, metadata) = build_cookie_world_scene_with_metadata().unwrap();
 
-        assert!(metadata.cookie_chocolate_chip_count >= 8);
-        assert!(metadata.candy_count >= 6);
-        assert!(scene.sphere_count() >= 16);
-        assert!(scene.cylinder_count() >= 8);
-        assert!(scene.oriented_box_count() >= 7);
+        assert_eq!(metadata.pig_count, 0);
+        assert_eq!(scene.object_count(), 2);
     }
 
     #[test]

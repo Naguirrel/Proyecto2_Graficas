@@ -1755,7 +1755,7 @@ mod tests {
     fn third_planet_builds_placeholder_scene() {
         let scene = build_planet_scene(PlanetType::AsteroidBelt).unwrap();
 
-        assert!(scene.object_count() >= 7);
+        assert_eq!(scene.object_count(), 2);
         assert!(scene.skybox().is_some());
         assert!(scene.lights().len() >= 5);
     }
