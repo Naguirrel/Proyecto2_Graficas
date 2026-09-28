@@ -11,6 +11,8 @@ pub struct Skybox {
     texture: Texture,
     intensity: f32,
     horizontal_rotation: f32,
+    uv_scale: Vec2,
+    wrap_mode: WrapMode,
 }
 
 impl Skybox {
@@ -19,6 +21,8 @@ impl Skybox {
             texture,
             intensity: 1.0,
             horizontal_rotation: 0.0,
+            uv_scale: Vec2::new(1.0, 1.0),
+            wrap_mode: WrapMode::Clamp,
         }
     }
 
@@ -36,12 +40,20 @@ impl Skybox {
         self
     }
 
+    pub fn with_tiling(mut self, tiles: Vec2) -> Self {
+        self.uv_scale = sanitize_uv_scale(tiles);
+        self.wrap_mode = WrapMode::Repeat;
+        self
+    }
+
     pub fn sample_direction(&self, direction: Vec3) -> Color {
         let Some(uv) = self.direction_to_uv(direction) else {
             return Color::BLACK;
         };
 
-        (self.texture.sample_bilinear(uv, WrapMode::Clamp) * self.intensity).clamped()
+        let tiled_uv = Vec2::new(uv.u * self.uv_scale.u, uv.v * self.uv_scale.v);
+
+        (self.texture.sample_bilinear(tiled_uv, self.wrap_mode) * self.intensity).clamped()
     }
 
     pub(crate) fn direction_to_uv(&self, direction: Vec3) -> Option<Vec2> {
@@ -66,6 +78,14 @@ impl Skybox {
         self.horizontal_rotation
     }
 
+    pub fn uv_scale(&self) -> Vec2 {
+        self.uv_scale
+    }
+
+    pub fn wrap_mode(&self) -> WrapMode {
+        self.wrap_mode
+    }
+
     pub fn texture(&self) -> &Texture {
         &self.texture
     }
@@ -87,13 +107,28 @@ fn sanitize_rotation(horizontal_rotation: f32) -> f32 {
     }
 }
 
+fn sanitize_uv_scale(uv_scale: Vec2) -> Vec2 {
+    Vec2::new(
+        sanitize_tile_axis(uv_scale.u),
+        sanitize_tile_axis(uv_scale.v),
+    )
+}
+
+fn sanitize_tile_axis(value: f32) -> f32 {
+    if value.is_finite() && value > 0.0 {
+        value
+    } else {
+        1.0
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Skybox;
     use crate::{
         color::Color,
-        math::Vec3,
-        texture::{FALLBACK_TEXTURE_COLOR, Texture},
+        math::{Vec2, Vec3},
+        texture::{FALLBACK_TEXTURE_COLOR, Texture, WrapMode},
     };
 
     fn test_skybox() -> Skybox {
@@ -266,6 +301,18 @@ mod tests {
 
         assert_near(skybox.intensity(), 1.0);
         assert_near(skybox.horizontal_rotation(), 0.0);
+    }
+
+    #[test]
+    fn tiling_repeats_skybox_texture_coordinates() {
+        let skybox = test_skybox().with_tiling(Vec2::new(3.0, 3.0));
+
+        assert_eq!(skybox.uv_scale(), Vec2::new(3.0, 3.0));
+        assert_eq!(skybox.wrap_mode(), WrapMode::Repeat);
+        assert_ne!(
+            skybox.sample_direction(Vec3::new(0.0, 0.0, 1.0)),
+            test_skybox().sample_direction(Vec3::new(0.0, 0.0, 1.0))
+        );
     }
 
     #[test]

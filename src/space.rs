@@ -402,7 +402,8 @@ pub fn cookie_world_skybox() -> Result<Skybox, TextureError> {
 pub fn level_three_skybox() -> Result<Skybox, TextureError> {
     Ok(Skybox::new(danger_zone_skybox_texture()?)
         .with_intensity(1.08)
-        .with_horizontal_rotation(0.0))
+        .with_horizontal_rotation(0.0)
+        .with_tiling(Vec2::new(3.0, 3.0)))
 }
 
 pub fn angry_birds_space_skybox() -> Result<Skybox, TextureError> {
@@ -1734,7 +1735,7 @@ mod tests {
     use crate::{
         color::Color,
         material::Material,
-        math::Vec3,
+        math::{Vec2, Vec3},
         oriented_box::OrientedBox,
         radial::RadialFrame,
         ray::Ray,
@@ -1946,6 +1947,8 @@ mod tests {
             assert_eq!(skybox.texture().width(), super::SPACE_SKYBOX_WIDTH);
             assert_eq!(skybox.texture().height(), super::SPACE_SKYBOX_HEIGHT);
             assert!(skybox.intensity() > 1.0);
+            assert_eq!(skybox.uv_scale(), Vec2::new(1.0, 1.0));
+            assert_eq!(skybox.wrap_mode(), WrapMode::Clamp);
         }
 
         assert_eq!(
@@ -1957,6 +1960,11 @@ mod tests {
             danger_zone_texture.height()
         );
         assert!(level_three.skybox().unwrap().intensity() > 1.0);
+        assert_eq!(
+            level_three.skybox().unwrap().uv_scale(),
+            Vec2::new(3.0, 3.0)
+        );
+        assert_eq!(level_three.skybox().unwrap().wrap_mode(), WrapMode::Repeat);
         assert_eq!(
             selector.skybox().unwrap().horizontal_rotation(),
             menu_preset.horizontal_rotation()
