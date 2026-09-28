@@ -19,8 +19,8 @@ use crate::{
 pub const BLUE_MOON_WINDOW_TITLE: &str = "Angry Birds Space Diorama - Luna Azul";
 pub const SPACE_WORLDS_WINDOW_TITLE: &str = "Angry Birds Space Diorama - Worlds";
 pub const BLUE_MOON_PLANET_CENTER: Vec3 = Vec3::new(0.0, 0.0, 0.0);
-pub const BLUE_MOON_PLANET_RADIUS: f32 = 2.2;
-pub const LAUNCH_ASTEROID_CENTER: Vec3 = Vec3::new(-3.8, -0.25, 1.25);
+pub const BLUE_MOON_PLANET_RADIUS: f32 = 1.25;
+pub const LAUNCH_ASTEROID_CENTER: Vec3 = Vec3::new(-1.42, 1.02, 0.66);
 pub const LAUNCH_ASTEROID_RADIUS: f32 = 0.62;
 pub const COOKIE_PLANET_CENTER: Vec3 = Vec3::new(4.45, -0.30, -0.25);
 pub const COOKIE_PLANET_RADIUS: f32 = 1.45;
@@ -83,10 +83,10 @@ const BLUE_MOON_TEXTURE: &str = "\
 P3
 4 4
 255
-82 91 104   122 135 148  70 78 92    146 154 162
-154 164 174  92 103 120   116 128 142  74 84 98
-96 106 122   164 172 180  85 96 112    134 146 158
-65 72 88     112 124 138  148 158 166  90 101 116
+104 116 110  150 160 150  78 88 84    170 176 164
+164 172 160  96 108 102   130 140 130  86 96 92
+112 124 118  178 184 170  92 106 100   146 156 144
+74 84 80     126 138 130  158 166 154  98 110 104
 ";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -291,12 +291,12 @@ pub(crate) fn build_space_levels_scene_with_metadata()
 pub fn blue_moon_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
     OrbitCamera::new(
         BLUE_MOON_PLANET_CENTER,
-        -0.30,
-        0.15,
-        9.7,
-        55.0,
+        0.0,
+        0.0,
+        8.2,
+        50.0,
         aspect_ratio,
-        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(0.18, 1.0, 0.0),
     )
 }
 
@@ -718,33 +718,33 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
 
     let moon = scene.add_material(
         Material::new(
-            Color::new(0.68, 0.80, 1.0),
+            Color::new(0.72, 0.78, 0.70),
             0.20,
             28.0,
             0.04,
             0.0,
             1.0,
-            Color::BLACK,
+            Color::new(0.105, 0.120, 0.095),
         )
         .with_texture(moon_texture, Vec2::new(4.0, 2.0), WrapMode::Repeat),
     )?;
     let crater = scene.add_material(Material::new(
-        Color::new(0.28, 0.34, 0.46),
+        Color::new(0.20, 0.31, 0.29),
         0.12,
         12.0,
         0.0,
         0.0,
         1.0,
-        Color::BLACK,
+        Color::new(0.018, 0.034, 0.028),
     ))?;
     let gravity_field = scene.add_material(Material::new(
-        Color::new(0.68, 0.90, 1.0),
-        0.08,
+        Color::new(0.76, 0.96, 1.0),
+        0.16,
         44.0,
-        0.010,
-        0.985,
+        0.025,
+        0.992,
         1.005,
-        Color::new(0.020, 0.055, 0.105),
+        Color::new(0.105, 0.240, 0.380),
     ))?;
     let cookie_gravity_field = scene.add_material(Material::new(
         Color::new(1.0, 0.82, 0.38),
@@ -801,7 +801,7 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         Color::BLACK,
     ))?;
     let asteroid = scene.add_material(Material::new(
-        Color::new(0.52, 0.49, 0.45),
+        Color::new(0.36, 0.18, 0.10),
         0.18,
         16.0,
         0.02,
@@ -1061,22 +1061,69 @@ fn add_enemy_construction(
     let frame = main_moon_frame()?;
 
     for (center, half_extents) in [
-        (Vec3::new(-0.82, 0.23, 0.45), Vec3::new(0.08, 0.23, 0.07)),
-        (Vec3::new(-0.36, 0.32, 0.45), Vec3::new(0.08, 0.32, 0.07)),
-        (Vec3::new(0.18, 0.44, 0.38), Vec3::new(0.08, 0.44, 0.07)),
-        (Vec3::new(0.74, 0.55, 0.08), Vec3::new(0.08, 0.55, 0.07)),
-        (Vec3::new(-0.58, 0.48, 0.45), Vec3::new(0.58, 0.055, 0.06)),
-        (Vec3::new(0.34, 0.70, 0.24), Vec3::new(0.58, 0.055, 0.06)),
-        (Vec3::new(-0.30, 0.94, -0.18), Vec3::new(0.58, 0.055, 0.06)),
-        (Vec3::new(0.38, 1.22, -0.28), Vec3::new(0.50, 0.055, 0.06)),
-        (Vec3::new(1.14, 0.48, -0.14), Vec3::new(0.54, 0.055, 0.06)),
-        (Vec3::new(1.72, 0.48, -0.14), Vec3::new(0.54, 0.055, 0.06)),
-        (Vec3::new(2.24, 0.44, -0.14), Vec3::new(0.44, 0.05, 0.05)),
-        (Vec3::new(1.38, 0.21, -0.38), Vec3::new(0.06, 0.21, 0.06)),
-        (Vec3::new(1.92, 0.21, -0.38), Vec3::new(0.06, 0.21, 0.06)),
-        (Vec3::new(-0.68, 0.18, 0.78), Vec3::new(0.46, 0.045, 0.05)),
-        (Vec3::new(-0.44, 0.42, 0.78), Vec3::new(0.045, 0.26, 0.05)),
-        (Vec3::new(-0.90, 0.42, 0.78), Vec3::new(0.045, 0.26, 0.05)),
+        (
+            front_local(-0.86, 0.18, -1.30),
+            Vec3::new(0.58, 0.055, 0.055),
+        ),
+        (
+            front_local(-0.86, 0.18, -0.82),
+            Vec3::new(0.56, 0.055, 0.055),
+        ),
+        (
+            front_local(-1.36, 0.16, -1.06),
+            Vec3::new(0.055, 0.055, 0.36),
+        ),
+        (
+            front_local(-0.38, 0.16, -1.06),
+            Vec3::new(0.055, 0.055, 0.36),
+        ),
+        (
+            front_local(-0.86, 0.16, -1.56),
+            Vec3::new(0.36, 0.050, 0.050),
+        ),
+        (
+            front_local(-0.50, 0.16, -0.58),
+            Vec3::new(0.45, 0.050, 0.050),
+        ),
+        (front_local(0.66, 0.18, 0.66), Vec3::new(0.55, 0.055, 0.055)),
+        (front_local(0.82, 0.16, 1.04), Vec3::new(0.055, 0.055, 0.44)),
+        (front_local(0.34, 0.16, 0.70), Vec3::new(0.055, 0.055, 0.38)),
+        (
+            front_local(1.55, 0.18, -0.46),
+            Vec3::new(1.08, 0.055, 0.055),
+        ),
+        (
+            front_local(1.58, 0.18, -0.82),
+            Vec3::new(1.00, 0.050, 0.050),
+        ),
+        (
+            front_local(0.78, 0.16, -0.64),
+            Vec3::new(0.055, 0.055, 0.30),
+        ),
+        (
+            front_local(1.28, 0.16, -0.64),
+            Vec3::new(0.055, 0.055, 0.30),
+        ),
+        (
+            front_local(1.80, 0.16, -0.64),
+            Vec3::new(0.055, 0.055, 0.30),
+        ),
+        (
+            front_local(2.35, 0.16, -0.66),
+            Vec3::new(0.055, 0.055, 0.28),
+        ),
+        (
+            front_local(2.70, 0.16, -0.73),
+            Vec3::new(0.42, 0.045, 0.045),
+        ),
+        (
+            front_local(-1.28, 0.16, -0.36),
+            Vec3::new(0.055, 0.055, 0.34),
+        ),
+        (
+            front_local(-0.84, 0.16, -0.24),
+            Vec3::new(0.44, 0.050, 0.050),
+        ),
     ] {
         add_radial_box(scene, frame, center, half_extents, materials.wood)?;
         metadata.wood_parts += 1;
@@ -1084,37 +1131,37 @@ fn add_enemy_construction(
 
     for (center, half_extents, material_id) in [
         (
-            Vec3::new(0.60, 1.42, -0.28),
+            front_local(0.62, 0.34, 1.28),
             Vec3::new(0.20, 0.18, 0.18),
             materials.ice,
         ),
         (
-            Vec3::new(0.90, 1.72, -0.28),
+            front_local(0.86, 0.34, 1.62),
             Vec3::new(0.18, 0.18, 0.16),
             materials.ice,
         ),
         (
-            Vec3::new(1.16, 2.00, -0.28),
+            front_local(1.08, 0.34, 1.92),
             Vec3::new(0.16, 0.16, 0.15),
             materials.metal,
         ),
         (
-            Vec3::new(-0.76, 0.76, 0.45),
+            front_local(-0.82, 0.34, -0.76),
             Vec3::new(0.18, 0.16, 0.17),
             materials.ice,
         ),
         (
-            Vec3::new(1.58, 0.74, -0.38),
+            front_local(1.06, 0.34, -0.46),
             Vec3::new(0.18, 0.16, 0.16),
             materials.ice,
         ),
         (
-            Vec3::new(2.02, 0.72, -0.38),
+            front_local(1.46, 0.34, -0.46),
             Vec3::new(0.18, 0.16, 0.16),
             materials.metal,
         ),
         (
-            Vec3::new(2.46, 0.68, -0.38),
+            front_local(1.86, 0.34, -0.46),
             Vec3::new(0.16, 0.14, 0.14),
             materials.metal,
         ),
@@ -1126,7 +1173,7 @@ fn add_enemy_construction(
     add_radial_box(
         scene,
         frame,
-        Vec3::new(0.30, 0.23, 0.46),
+        front_local(-0.22, 0.32, -0.56),
         Vec3::new(0.18, 0.18, 0.18),
         materials.tnt,
     )?;
@@ -1135,7 +1182,7 @@ fn add_enemy_construction(
     add_radial_box(
         scene,
         frame,
-        Vec3::new(-0.18, 0.23, 0.70),
+        front_local(0.18, 0.32, -0.56),
         Vec3::new(0.14, 0.14, 0.14),
         materials.tnt,
     )?;
@@ -1152,11 +1199,11 @@ fn add_pigs(
     let frame = main_moon_frame()?;
 
     for (local_center, radius) in [
-        (Vec3::new(-0.82, 0.84, 0.47), 0.19),
-        (Vec3::new(-0.38, 0.72, 0.76), 0.18),
-        (Vec3::new(0.22, 0.66, 0.44), 0.18),
-        (Vec3::new(0.76, 0.94, -0.04), 0.17),
-        (Vec3::new(0.72, 1.82, -0.28), 0.16),
+        (front_local(-0.86, 0.45, -0.66), 0.17),
+        (front_local(-0.58, 0.45, -1.66), 0.17),
+        (front_local(0.04, 0.45, -0.54), 0.17),
+        (front_local(0.66, 0.45, 0.04), 0.16),
+        (front_local(0.70, 0.45, 1.30), 0.15),
     ] {
         add_space_pig_at(scene, frame, local_center, radius, materials)?;
     }
@@ -1181,7 +1228,7 @@ fn add_launcher(
     let frame = RadialFrame::from_normal(
         LAUNCH_ASTEROID_CENTER,
         LAUNCH_ASTEROID_RADIUS,
-        Vec3::new(0.10, 0.48, 1.0),
+        Vec3::new(0.0, 0.35, 1.0),
     )?;
 
     for local in [
@@ -1230,9 +1277,9 @@ fn add_asteroid_plants(
     materials: SpaceMaterials,
 ) -> Result<(), SpaceBuildError> {
     for local in [
-        Vec3::new(0.28, 0.66, 0.26),
-        Vec3::new(0.44, 0.58, 0.08),
-        Vec3::new(0.18, 0.54, -0.30),
+        Vec3::new(0.26, 0.54, 0.24),
+        Vec3::new(0.44, 0.46, 0.06),
+        Vec3::new(0.14, 0.44, -0.24),
     ] {
         scene.add_cone(Cone::new(
             frame.local_to_world(local),
@@ -1252,10 +1299,10 @@ fn add_launch_trail(
     materials: SpaceMaterials,
 ) -> Result<(), SpaceBuildError> {
     for (center, radius) in [
-        (Vec3::new(-3.06, 0.60, 0.42), 0.060),
-        (Vec3::new(-2.82, 0.80, 0.22), 0.052),
-        (Vec3::new(-2.56, 0.96, 0.02), 0.044),
-        (Vec3::new(-2.28, 1.08, -0.18), 0.036),
+        (Vec3::new(-2.35, 0.86, 0.88), 0.060),
+        (Vec3::new(-2.62, 0.56, 0.92), 0.052),
+        (Vec3::new(-2.84, 0.22, 0.96), 0.044),
+        (Vec3::new(-3.02, -0.12, 1.00), 0.036),
     ] {
         scene.add_sphere(Sphere::new(center, radius, materials.purple_trail)?)?;
         metadata.trajectory_trail_parts += 1;
@@ -1292,7 +1339,7 @@ fn add_gravity_field(
     let gravity_id = scene.object_count();
     scene.add_sphere(Sphere::new(
         BLUE_MOON_PLANET_CENTER,
-        BLUE_MOON_PLANET_RADIUS * 1.20,
+        BLUE_MOON_PLANET_RADIUS * 2.74,
         materials.gravity_field,
     )?)?;
     metadata.gravity_field_id = Some(gravity_id);
@@ -1832,12 +1879,15 @@ fn add_radial_cylinder(
 }
 
 fn main_moon_frame() -> Result<RadialFrame, SpaceBuildError> {
-    Ok(RadialFrame::from_latitude_longitude(
+    Ok(RadialFrame::from_normal(
         BLUE_MOON_PLANET_CENTER,
         BLUE_MOON_PLANET_RADIUS,
-        0.22,
-        1.45,
+        Vec3::new(0.0, 0.0, 1.0),
     )?)
+}
+
+fn front_local(screen_x: f32, radial_y: f32, screen_y: f32) -> Vec3 {
+    Vec3::new(-screen_x, radial_y, screen_y)
 }
 
 fn cookie_level_frame() -> Result<RadialFrame, SpaceBuildError> {
@@ -2129,7 +2179,9 @@ mod tests {
         let trail_material = scene
             .materials()
             .iter()
-            .filter(|material| material.emission.b > 0.30 && material.albedo.r > 0.60)
+            .filter(|material| {
+                material.emission.b > 0.30 && material.albedo.r > 0.60 && material.albedo.g < 0.20
+            })
             .count();
 
         assert_eq!(metadata.pig_count, 5);
