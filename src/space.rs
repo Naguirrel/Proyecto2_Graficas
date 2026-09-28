@@ -90,7 +90,6 @@ pub enum SpaceBuildError {
 #[derive(Debug, Clone, Copy)]
 struct SpaceMaterials {
     moon: usize,
-    crater: usize,
     gravity_field: usize,
     cookie_gravity_field: usize,
     level_three: usize,
@@ -121,7 +120,6 @@ pub(crate) struct SpaceSceneMetadata {
     pub cookie_gravity_field_id: Option<usize>,
     pub level_three_planet_id: Option<usize>,
     pub level_three_gravity_field_id: Option<usize>,
-    pub crater_count: usize,
     pub decorative_asteroid_count: usize,
     pub cookie_chocolate_chip_count: usize,
     pub candy_count: usize,
@@ -699,15 +697,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         )
         .with_texture(moon_texture, Vec2::new(1.0, 1.0), WrapMode::Repeat),
     )?;
-    let crater = scene.add_material(Material::new(
-        Color::new(0.20, 0.31, 0.29),
-        0.12,
-        12.0,
-        0.0,
-        0.0,
-        1.0,
-        Color::new(0.018, 0.034, 0.028),
-    ))?;
     let gravity_field = scene.add_material(Material::new(
         Color::new(0.76, 0.96, 1.0),
         0.16,
@@ -884,7 +873,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
 
     Ok(SpaceMaterials {
         moon,
-        crater,
         gravity_field,
         cookie_gravity_field,
         level_three,
@@ -921,45 +909,6 @@ fn add_planet(
         materials.moon,
     )?)?;
     metadata.planet_id = Some(planet_id);
-
-    for (latitude, longitude, radius) in [
-        (0.25, 1.38, 0.28),
-        (-0.10, 1.62, 0.20),
-        (0.48, 1.86, 0.17),
-        (-0.42, 1.20, 0.24),
-        (0.05, 2.10, 0.16),
-        (0.62, 0.92, 0.14),
-        (-0.66, 1.82, 0.18),
-        (0.18, 0.74, 0.13),
-        (-0.28, 2.48, 0.15),
-        (0.72, 2.52, 0.12),
-        (0.10, -2.55, 0.18),
-        (-0.58, -2.10, 0.13),
-        (0.34, -2.85, 0.11),
-        (-0.72, -2.72, 0.10),
-        (0.82, 0.42, 0.09),
-        (-0.86, 0.58, 0.11),
-        (0.42, 2.88, 0.08),
-        (-0.08, 2.95, 0.09),
-        (0.54, -1.72, 0.13),
-        (-0.36, -1.48, 0.10),
-    ] {
-        let frame = RadialFrame::from_latitude_longitude(
-            BLUE_MOON_PLANET_CENTER,
-            BLUE_MOON_PLANET_RADIUS,
-            latitude,
-            longitude,
-        )?;
-        add_radial_cylinder(
-            scene,
-            frame,
-            Vec3::new(0.0, 0.025, 0.0),
-            radius,
-            0.018,
-            materials.crater,
-        )?;
-        metadata.crater_count += 1;
-    }
 
     Ok(())
 }
@@ -1676,13 +1625,12 @@ mod tests {
         let (scene, metadata) = build_blue_moon_scene_with_metadata().unwrap();
 
         assert_eq!(metadata.pig_count, 0);
-        assert!(metadata.crater_count >= 10);
         assert_eq!(metadata.decorative_asteroid_count, 0);
         assert_eq!(metadata.wood_parts, 0);
         assert_eq!(metadata.ice_or_metal_parts, 0);
         assert_eq!(metadata.tnt_parts, 0);
         assert_eq!(scene.sphere_count(), 1);
-        assert_eq!(scene.cylinder_count(), metadata.crater_count);
+        assert_eq!(scene.cylinder_count(), 0);
         assert_eq!(scene.cone_count(), 0);
         assert_eq!(scene.oriented_box_count(), 0);
     }
@@ -1696,8 +1644,8 @@ mod tests {
         assert_eq!(metadata.pig_count, 0);
         assert_eq!(
             scene.object_count(),
-            1 + metadata.crater_count,
-            "the blue moon level should contain only the planet body and its surface craters"
+            1,
+            "the blue moon level should contain only the textured planet body"
         );
     }
 
@@ -1906,7 +1854,7 @@ mod tests {
         assert!(metadata.cookie_chocolate_chip_count >= 8);
         assert!(metadata.candy_count >= 6);
         assert!(scene.sphere_count() >= 16);
-        assert!(scene.cylinder_count() >= 28);
+        assert!(scene.cylinder_count() >= 8);
         assert!(scene.oriented_box_count() >= 7);
     }
 
@@ -1916,7 +1864,7 @@ mod tests {
 
         assert!(scene.skybox().is_some());
         assert!(scene.lights().len() >= 7);
-        assert!(scene.object_count() >= 60);
+        assert!(scene.object_count() >= 40);
         assert!(scene.object_count() < 260);
 
         for primitive in scene.objects() {
