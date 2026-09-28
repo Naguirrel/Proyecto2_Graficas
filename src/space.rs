@@ -1123,9 +1123,9 @@ fn add_blue_moon_wood_structure(
     )?;
 
     for (center, half_extents) in [
-        (Vec3::new(0.00, 0.035, 0.00), Vec3::new(0.50, 0.020, 0.30)),
-        (Vec3::new(-0.24, 0.045, -0.04), Vec3::new(0.23, 0.018, 0.23)),
-        (Vec3::new(0.26, 0.043, 0.07), Vec3::new(0.24, 0.018, 0.20)),
+        (Vec3::new(0.00, 0.006, 0.00), Vec3::new(0.50, 0.072, 0.30)),
+        (Vec3::new(-0.24, 0.012, -0.04), Vec3::new(0.23, 0.072, 0.23)),
+        (Vec3::new(0.26, 0.012, 0.07), Vec3::new(0.24, 0.072, 0.20)),
     ] {
         add_radial_box(scene, frame, center, half_extents, materials.moon_dirt)?;
         metadata.blue_moon_dirt_base_parts += 1;
@@ -2032,15 +2032,15 @@ mod tests {
                 (box_object.center() - BLUE_MOON_PLANET_CENTER).length() - BLUE_MOON_PLANET_RADIUS;
             let half_extents = box_object.half_extents();
 
-            assert!(surface_clearance > half_extents.y);
-
-            if half_extents.y <= 0.020 {
+            if half_extents.z >= 0.20 {
                 dirt_parts += 1;
-                assert!(surface_clearance < 0.085);
+                assert!(surface_clearance < half_extents.y);
+                assert!(surface_clearance + half_extents.y > 0.075);
                 assert!(half_extents.x >= 0.20);
                 assert!(half_extents.z >= 0.20);
             } else {
                 wood_parts += 1;
+                assert!(surface_clearance > half_extents.y);
                 assert!(surface_clearance >= 0.160);
                 assert!(half_extents.x <= 0.45);
                 assert!(half_extents.z <= 0.06);
