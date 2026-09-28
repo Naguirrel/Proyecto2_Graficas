@@ -1,5 +1,6 @@
 pub mod app;
 pub mod basis;
+mod bvh;
 pub mod camera;
 pub mod cinema;
 pub mod color;

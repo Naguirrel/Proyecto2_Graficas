@@ -1,5 +1,5 @@
 use crate::{
-    color::Color, cone::Cone, cube::Cube, curved_tetrahedron::CurvedTetrahedron,
+    bvh::Bvh, color::Color, cone::Cone, cube::Cube, curved_tetrahedron::CurvedTetrahedron,
     cylinder::Cylinder, intersection::Intersection, light::PointLight, material::Material,
     oriented_box::OrientedBox, primitive::Primitive, ray::Ray, skybox::Skybox, sphere::Sphere,
     texture::Texture,
@@ -14,6 +14,7 @@ pub enum SceneError {
 #[derive(Debug)]
 pub struct Scene {
     objects: Vec<Primitive>,
+    bvh: Option<Bvh>,
     materials: Vec<Material>,
     textures: Vec<Texture>,
     lights: Vec<PointLight>,
@@ -79,7 +80,13 @@ impl Scene {
         }
 
         self.objects.push(primitive);
+        self.bvh = None;
         Ok(())
+    }
+
+    /// Builds the static acceleration structure after scene construction.
+    pub fn build_bvh(&mut self) {
+        self.bvh = Some(Bvh::build(&self.objects));
     }
 
     pub fn add_light(&mut self, light: PointLight) {
@@ -197,6 +204,9 @@ impl Scene {
     }
 
     pub fn intersect(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<Intersection> {
+        if let Some(bvh) = &self.bvh {
+            return bvh.intersect(&self.objects, ray, t_min, t_max);
+        }
         let mut closest = t_max;
         let mut closest_hit = None;
 
@@ -211,6 +221,9 @@ impl Scene {
     }
 
     pub fn intersects_any(&self, ray: &Ray, t_min: f32, t_max: f32) -> bool {
+        if let Some(bvh) = &self.bvh {
+            return bvh.intersects_any(&self.objects, ray, t_min, t_max);
+        }
         self.objects
             .iter()
             .any(|primitive| primitive.intersect(ray, t_min, t_max).is_some())
@@ -221,6 +234,7 @@ impl Default for Scene {
     fn default() -> Self {
         Self {
             objects: Vec::new(),
+            bvh: None,
             materials: Vec::new(),
             textures: Vec::new(),
             lights: Vec::new(),
@@ -735,6 +749,100 @@ mod tests {
                 scene.intersects_any(&ray, 0.001, 100.0),
                 scene.intersect(&ray, 0.001, 100.0).is_some()
             );
+        }
+    }
+
+    #[test]
+    fn bvh_matches_linear_hits_and_shadows_for_mixed_geometry() {
+        let mut scene = diffuse_scene();
+        for offset in -3..=3 {
+            let x = offset as f32 * 2.4;
+            scene
+                .add_cube(Cube::new(
+                    Vec3::new(x - 0.4, -0.4, -0.4),
+                    Vec3::new(x + 0.4, 0.4, 0.4),
+                    0,
+                ))
+                .unwrap();
+            scene
+                .add_sphere(Sphere::new(Vec3::new(x, 1.4, 0.0), 0.45, 0).unwrap())
+                .unwrap();
+        }
+        scene.add_oriented_box(unit_oriented_box(0)).unwrap();
+        scene.add_cylinder(unit_cylinder(0)).unwrap();
+        scene.add_cone(unit_cone(0)).unwrap();
+        scene
+            .add_curved_tetrahedron(unit_curved_tetrahedron(0))
+            .unwrap();
+
+        let rays: Vec<_> = (-40..=40)
+            .flat_map(|x| {
+                (-12..=12).map(move |y| {
+                    Ray::new(
+                        Vec3::new(x as f32 * 0.25, y as f32 * 0.25, 8.0),
+                        Vec3::new(0.03, 0.02, -1.0),
+                    )
+                })
+            })
+            .collect();
+        let expected: Vec<_> = rays
+            .iter()
+            .map(|ray| {
+                (
+                    scene.intersect(ray, 0.001, 100.0),
+                    scene.intersects_any(ray, 0.001, 100.0),
+                )
+            })
+            .collect();
+
+        scene.build_bvh();
+        for (ray, (hit, any)) in rays.iter().zip(expected) {
+            assert_eq!(scene.intersect(ray, 0.001, 100.0), hit);
+            assert_eq!(scene.intersects_any(ray, 0.001, 100.0), any);
+        }
+    }
+
+    #[test]
+    fn adding_object_invalidates_bvh() {
+        let mut scene = diffuse_scene();
+        scene.build_bvh();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn bvh_matches_linear_search_in_spatial_levels() {
+        for (build, orbit) in [
+            (
+                crate::space::build_blue_moon_scene as fn() -> _,
+                crate::space::blue_moon_orbit_camera as fn(f32) -> _,
+            ),
+            (
+                crate::space::build_cookie_world_scene,
+                crate::space::cookie_world_orbit_camera,
+            ),
+            (
+                crate::space::build_level_three_scene,
+                crate::space::level_three_orbit_camera,
+            ),
+        ] {
+            let scene = build().unwrap();
+            let camera = orbit(16.0 / 9.0).to_camera();
+            for y in 0..18 {
+                for x in 0..32 {
+                    let ray = camera.ray_for_pixel(x, y, 32, 18);
+                    let mut closest = 1_000.0;
+                    let mut expected = None;
+                    for object in scene.objects() {
+                        if let Some(hit) = object.intersect(&ray, 0.001, closest) {
+                            closest = hit.distance;
+                            expected = Some(hit);
+                        }
+                    }
+                    assert_eq!(scene.intersect(&ray, 0.001, 1_000.0), expected);
+                }
+            }
         }
     }
 

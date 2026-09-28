@@ -676,6 +676,8 @@ pub(crate) fn build_blue_moon_scene_with_metadata()
     scene.set_ambient_light(Color::new(0.290, 0.330, 0.390));
     add_blue_moon_fill_light(&mut scene);
 
+    scene.build_bvh();
+
     Ok((scene, metadata))
 }
 
@@ -697,6 +699,8 @@ pub(crate) fn build_cookie_world_scene_with_metadata()
     add_cookie_world_birds(&mut scene, &mut metadata, materials, world)?;
     add_cookie_world_lighting(&mut scene);
 
+    scene.build_bvh();
+
     Ok((scene, metadata))
 }
 
@@ -706,6 +710,8 @@ pub fn build_galaxy_selector_scene() -> Result<Scene, SpaceBuildError> {
     scene.set_ambient_light(Color::new(0.360, 0.380, 0.440));
     add_selector_worlds(&mut scene, materials)?;
     add_selector_lighting(&mut scene);
+
+    scene.build_bvh();
 
     Ok(scene)
 }
@@ -728,6 +734,8 @@ pub(crate) fn build_level_three_scene_with_metadata()
     add_level_three_slingshot_asteroid(&mut scene, &mut metadata, materials)?;
     add_level_three_lighting(&mut scene);
 
+    scene.build_bvh();
+
     Ok((scene, metadata))
 }
 
@@ -744,6 +752,8 @@ pub(crate) fn build_space_levels_scene_with_metadata()
     add_cookie_level(&mut scene, &mut metadata, materials)?;
     add_space_lighting(&mut scene);
     add_cookie_level_lighting(&mut scene);
+
+    scene.build_bvh();
 
     Ok((scene, metadata))
 }

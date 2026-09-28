@@ -432,6 +432,7 @@ fn build_cinema_scene_internal() -> Result<(Scene, CinemaBuildMetadata), CinemaB
     add_projector(&mut scene, &mut metadata, materials)?;
     add_after_show_details(&mut scene, &mut metadata, materials)?;
     configure_cinema_lighting(&mut scene);
+    scene.build_bvh();
 
     Ok((scene, metadata))
 }

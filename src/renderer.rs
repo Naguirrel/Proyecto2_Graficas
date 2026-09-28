@@ -2913,6 +2913,15 @@ mod tests {
     }
 
     #[test]
+    fn parallel_render_matches_sequential_with_bvh() {
+        let mut scene = mixed_cube_sphere_scene();
+        scene.build_bvh();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 19, 13);
+    }
+
+    #[test]
     fn parallel_render_matches_sequential_with_oriented_box() {
         let scene = front_oriented_box_scene(Material::diffuse(Color::new(0.2, 0.4, 0.6)));
         let camera = front_camera(1.0);
