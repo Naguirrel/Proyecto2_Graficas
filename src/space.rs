@@ -216,6 +216,8 @@ pub(crate) fn build_blue_moon_scene_with_metadata()
 
     add_blue_moon_world(&mut scene, &mut metadata, materials)?;
     add_space_lighting(&mut scene);
+    scene.set_ambient_light(Color::new(0.290, 0.330, 0.390));
+    add_blue_moon_fill_light(&mut scene);
 
     Ok((scene, metadata))
 }
@@ -282,8 +284,8 @@ pub(crate) fn build_space_levels_scene_with_metadata()
 pub fn blue_moon_orbit_camera(aspect_ratio: f32) -> OrbitCamera {
     OrbitCamera::new(
         BLUE_MOON_PLANET_CENTER,
-        0.0,
-        0.0,
+        -1.57,
+        1.25,
         8.2,
         50.0,
         aspect_ratio,
@@ -1400,6 +1402,15 @@ fn add_space_lighting(scene: &mut Scene) {
     ));
 }
 
+fn add_blue_moon_fill_light(scene: &mut Scene) {
+    // Inside the atmosphere so it can reach the structures and planet surface.
+    scene.add_light(PointLight::new(
+        BLUE_MOON_PLANET_CENTER + Vec3::new(2.4, 1.2, 0.5),
+        Color::new(0.86, 0.93, 1.0),
+        1.4,
+    ));
+}
+
 fn add_cookie_level_lighting(scene: &mut Scene) {
     scene.add_light(PointLight::new(
         Vec3::new(5.9, 3.0, 5.4),
@@ -1761,6 +1772,37 @@ mod tests {
         assert!(metadata.blue_moon_atmosphere_id.is_some());
         assert!(metadata.cookie_planet_id.is_none());
         assert_eq!(metadata.pig_count, BLUE_MOON_LEVEL_PIG_COUNT);
+    }
+
+    #[test]
+    fn blue_moon_initial_camera_frames_all_three_structures() {
+        let camera = blue_moon_orbit_camera(16.0 / 9.0).to_camera();
+        let basis = camera.basis();
+        let horizontal_position = |point: Vec3| {
+            let offset = point - camera.position;
+            offset.dot(basis.right) / offset.dot(basis.forward)
+        };
+        let center = horizontal_position(blue_moon_structure_frame().unwrap().surface_point());
+        let left = horizontal_position(blue_moon_side_tower_frame().unwrap().surface_point());
+        let right =
+            horizontal_position(blue_moon_second_structure_frame().unwrap().surface_point());
+
+        assert!(center.abs() < 0.05);
+        assert!(left < center - 0.08);
+        assert!(right > center + 0.08);
+    }
+
+    #[test]
+    fn blue_moon_has_soft_light_inside_its_atmosphere() {
+        let (scene, _) = build_blue_moon_scene_with_metadata().unwrap();
+        let fill = scene.lights().last().unwrap();
+
+        assert!(scene.ambient_light().r > 0.24);
+        assert!(scene.ambient_light().g > 0.28);
+        assert!(scene.ambient_light().b > 0.34);
+        assert!((fill.position - BLUE_MOON_PLANET_CENTER).length() < BLUE_MOON_ATMOSPHERE_RADIUS);
+        assert!(fill.position.x > BLUE_MOON_PLANET_RADIUS);
+        assert!(fill.intensity > 0.0);
     }
 
     #[test]
