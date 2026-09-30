@@ -23,11 +23,16 @@ mod birds;
 mod blue_moon;
 mod cosmic_crystals;
 mod level_one;
+mod selector;
 mod voxel;
 
 pub use cosmic_crystals::{build_level_four_scene, level_four_orbit_camera, level_four_skybox};
 pub use level_one::{
     LevelOneGame, build_level_one, build_level_one_scene, level_one_layout, level_one_orbit_camera,
+};
+pub use selector::{
+    SELECTOR_SIGN_HALF_HEIGHT, SELECTOR_SIGN_HALF_WIDTH, galaxy_selector_sign_center,
+    galaxy_selector_sign_tilt_degrees, selector_skybox,
 };
 pub use voxel::VoxelError;
 use voxel::{VoxelBall, VoxelBody, VoxelBodyParts};
@@ -409,14 +414,14 @@ const LEVEL_THREE_SKYBOX_TILES: f32 = 4.0;
 pub const LEVEL_THREE_CAMERA_TARGET: Vec3 = Vec3::new(-2.45, 0.35, 0.10);
 pub const SPACE_SUN_DIRECTION: Vec3 = Vec3::new(-0.76, 0.54, -0.36);
 pub const COOKIE_LEVEL_PIG_COUNT: usize = 1;
-pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-4.65, -0.72, 0.0);
-pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 1.12;
-pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(-1.55, -0.88, 0.0);
-pub const GALAXY_SELECTOR_COOKIE_RADIUS: f32 = 1.34;
-pub const GALAXY_SELECTOR_LEVEL_THREE_CENTER: Vec3 = Vec3::new(1.55, -0.72, 0.0);
-pub const GALAXY_SELECTOR_LEVEL_THREE_RADIUS: f32 = 1.14;
-pub const GALAXY_SELECTOR_LEVEL_FOUR_CENTER: Vec3 = Vec3::new(4.65, -0.72, 0.0);
-pub const GALAXY_SELECTOR_LEVEL_FOUR_RADIUS: f32 = 1.16;
+pub const GALAXY_SELECTOR_BLUE_MOON_CENTER: Vec3 = Vec3::new(-4.90, -0.85, 0.0);
+pub const GALAXY_SELECTOR_BLUE_MOON_RADIUS: f32 = 1.05;
+pub const GALAXY_SELECTOR_COOKIE_CENTER: Vec3 = Vec3::new(-1.63, -0.95, 0.0);
+pub const GALAXY_SELECTOR_COOKIE_RADIUS: f32 = 1.16;
+pub const GALAXY_SELECTOR_LEVEL_THREE_CENTER: Vec3 = Vec3::new(1.63, -0.85, 0.0);
+pub const GALAXY_SELECTOR_LEVEL_THREE_RADIUS: f32 = 1.05;
+pub const GALAXY_SELECTOR_LEVEL_FOUR_CENTER: Vec3 = Vec3::new(4.90, -0.85, 0.0);
+pub const GALAXY_SELECTOR_LEVEL_FOUR_RADIUS: f32 = 1.08;
 const SELECTOR_CRYSTAL_TEXTURE_WIDTH: usize = 256;
 const SELECTOR_CRYSTAL_TEXTURE_HEIGHT: usize = 128;
 const SELECTOR_SUN_U: f32 = 0.25;
@@ -515,14 +520,11 @@ pub enum SpaceBuildError {
 
 #[derive(Debug, Clone, Copy)]
 struct SpaceMaterials {
-    gravity_field: usize,
     cookie_gravity_field: usize,
     level_three_asteroid: usize,
     level_three_stone: usize,
     ice: usize,
-    level_three_gravity_field: usize,
     level_three_atmosphere: usize,
-    level_four_gravity_field: usize,
     selector_locked_moon: usize,
     selector_locked_cookie: usize,
     selector_locked_level_three: usize,
@@ -740,16 +742,10 @@ pub(crate) fn build_cookie_world_scene_with_metadata()
     Ok((scene, metadata))
 }
 
+/// World selector: planets of cubes with wooden signs and decorations (see
+/// `selector`).
 pub fn build_galaxy_selector_scene() -> Result<Scene, SpaceBuildError> {
-    let (mut scene, materials) = base_space_scene_with_skybox(space_menu_skybox()?)?;
-
-    scene.set_ambient_light(Color::new(0.360, 0.380, 0.440));
-    add_selector_worlds(&mut scene, materials)?;
-    add_selector_lighting(&mut scene);
-
-    scene.build_bvh();
-
-    Ok(scene)
+    selector::build_selector_scene().map(|(scene, _)| scene)
 }
 
 pub fn build_level_three_scene() -> Result<Scene, SpaceBuildError> {
@@ -1274,54 +1270,6 @@ fn smooth_noise(x: f32, y: f32) -> f32 {
     top + (bottom - top) * ty
 }
 
-fn add_selector_worlds(
-    scene: &mut Scene,
-    materials: SpaceMaterials,
-) -> Result<(), SpaceBuildError> {
-    scene.add_sphere(Sphere::new(
-        GALAXY_SELECTOR_BLUE_MOON_CENTER,
-        GALAXY_SELECTOR_BLUE_MOON_RADIUS * 1.18,
-        materials.gravity_field,
-    )?)?;
-    scene.add_sphere(Sphere::new(
-        GALAXY_SELECTOR_BLUE_MOON_CENTER,
-        GALAXY_SELECTOR_BLUE_MOON_RADIUS,
-        materials.selector_locked_moon,
-    )?)?;
-    scene.add_sphere(Sphere::new(
-        GALAXY_SELECTOR_COOKIE_CENTER,
-        GALAXY_SELECTOR_COOKIE_RADIUS * 1.17,
-        materials.cookie_gravity_field,
-    )?)?;
-    scene.add_sphere(Sphere::new(
-        GALAXY_SELECTOR_COOKIE_CENTER,
-        GALAXY_SELECTOR_COOKIE_RADIUS,
-        materials.selector_locked_cookie,
-    )?)?;
-    scene.add_sphere(Sphere::new(
-        GALAXY_SELECTOR_LEVEL_THREE_CENTER,
-        GALAXY_SELECTOR_LEVEL_THREE_RADIUS * 1.16,
-        materials.level_three_gravity_field,
-    )?)?;
-    scene.add_sphere(Sphere::new(
-        GALAXY_SELECTOR_LEVEL_THREE_CENTER,
-        GALAXY_SELECTOR_LEVEL_THREE_RADIUS,
-        materials.selector_locked_level_three,
-    )?)?;
-    scene.add_sphere(Sphere::new(
-        GALAXY_SELECTOR_LEVEL_FOUR_CENTER,
-        GALAXY_SELECTOR_LEVEL_FOUR_RADIUS * 1.16,
-        materials.level_four_gravity_field,
-    )?)?;
-    scene.add_sphere(Sphere::new(
-        GALAXY_SELECTOR_LEVEL_FOUR_CENTER,
-        GALAXY_SELECTOR_LEVEL_FOUR_RADIUS,
-        materials.selector_locked_level_four,
-    )?)?;
-
-    Ok(())
-}
-
 fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBuildError> {
     let moon_texture = scene.add_texture(Texture::from_ppm_file(BLUE_MOON_PLANET_TEXTURE_PATH)?);
     let selector_cookie_texture = scene.add_texture(selector_cookie_texture()?);
@@ -1336,15 +1284,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         SELECTOR_CRYSTAL_TEXTURE_HEIGHT,
     )?);
 
-    let gravity_field = scene.add_material(Material::new(
-        Color::new(0.76, 0.96, 1.0),
-        0.16,
-        44.0,
-        0.025,
-        0.992,
-        1.005,
-        Color::new(0.105, 0.240, 0.380),
-    ))?;
     let cookie_gravity_field = scene.add_material(Material::new(
         Color::new(1.0, 0.82, 0.38),
         0.08,
@@ -1395,15 +1334,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         )
         .with_texture(ice_block_texture, Vec2::new(1.0, 1.0), WrapMode::Repeat),
     )?;
-    let level_three_gravity_field = scene.add_material(Material::new(
-        Color::new(0.78, 0.42, 1.0),
-        0.10,
-        48.0,
-        0.012,
-        0.982,
-        1.005,
-        Color::new(0.060, 0.018, 0.110),
-    ))?;
     // Level three atmospheres: translucent red, without refraction so the
     // structures inside are not distorted.
     let level_three_atmosphere = scene.add_material(Material::new(
@@ -1414,15 +1344,6 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         0.88,
         1.0,
         Color::new(0.110, 0.020, 0.018),
-    ))?;
-    let level_four_gravity_field = scene.add_material(Material::new(
-        Color::new(1.0, 0.58, 0.92),
-        0.10,
-        48.0,
-        0.012,
-        0.982,
-        1.005,
-        Color::new(0.100, 0.030, 0.090),
     ))?;
     let selector_locked_moon = scene.add_material(
         Material::new(
@@ -1573,14 +1494,11 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         .with_texture(tnt_crate_texture, Vec2::new(1.0, 1.0), WrapMode::Clamp),
     )?;
     Ok(SpaceMaterials {
-        gravity_field,
         cookie_gravity_field,
         level_three_asteroid,
         level_three_stone,
         ice,
-        level_three_gravity_field,
         level_three_atmosphere,
-        level_four_gravity_field,
         selector_locked_moon,
         selector_locked_cookie,
         selector_locked_level_three,
@@ -3669,37 +3587,6 @@ fn add_level_three_rocks(
     Ok(())
 }
 
-fn add_selector_lighting(scene: &mut Scene) {
-    add_sun_key_light(scene, 66.0);
-    scene.add_light(PointLight::new(
-        Vec3::new(0.0, 2.8, 7.4),
-        Color::new(0.62, 0.86, 1.0),
-        18.0,
-    ));
-    scene.add_light(PointLight::new(
-        Vec3::new(4.4, 2.2, 5.2),
-        Color::new(0.46, 0.74, 1.0),
-        10.0,
-    ));
-    scene.add_light(PointLight::new(
-        Vec3::new(-2.6, -0.8, 4.0),
-        Color::new(1.0, 0.78, 0.45),
-        5.4,
-    ));
-    for (world, color) in galaxy_selector_worlds().into_iter().zip([
-        Color::new(0.82, 0.94, 1.0),
-        Color::new(1.0, 0.84, 0.62),
-        Color::new(0.92, 0.82, 1.0),
-        Color::new(1.0, 0.80, 0.96),
-    ]) {
-        scene.add_light(PointLight::new(
-            world.center + Vec3::new(-world.radius * 0.30, world.radius * 0.38, world.radius),
-            color,
-            1.6,
-        ));
-    }
-}
-
 fn add_space_lighting(scene: &mut Scene) {
     add_sun_key_light(scene, 82.0);
     scene.add_light(PointLight::new(
@@ -4085,40 +3972,6 @@ mod tests {
     }
 
     #[test]
-    fn galaxy_selector_scene_contains_only_selector_world_geometry() {
-        let scene = build_galaxy_selector_scene().unwrap();
-
-        assert_eq!(scene.sphere_count(), 8);
-        assert_eq!(scene.object_count(), 8);
-        assert!(scene.skybox().is_some());
-        assert!(scene.lights().len() >= 3);
-        assert!(scene.ambient_light().b > 0.39);
-    }
-
-    #[test]
-    fn galaxy_selector_planets_are_colored_and_lit_within_gravity_fields() {
-        let scene = build_galaxy_selector_scene().unwrap();
-
-        for world in galaxy_selector_worlds() {
-            let body = scene
-                .objects()
-                .iter()
-                .filter_map(|object| object.as_sphere())
-                .find(|sphere| sphere.center() == world.center && sphere.radius() == world.radius)
-                .unwrap();
-            let material = scene.material(body.material_id()).unwrap();
-
-            assert!(material.albedo.r + material.albedo.g + material.albedo.b > 1.8);
-            assert!(material.texture_id.is_some());
-            assert_eq!(material.transparency, 0.0);
-            assert!(scene.lights().iter().any(|light| {
-                let distance = (light.position - world.center).length();
-                distance > world.radius && distance < world.radius * 1.16
-            }));
-        }
-    }
-
-    #[test]
     fn selector_skybox_has_a_central_sun_over_dark_blue_space() {
         let sun = super::selector_skybox_color(super::SELECTOR_SUN_U, super::SELECTOR_SUN_V);
         let background = super::selector_skybox_color(0.50, super::SELECTOR_SUN_V);
@@ -4287,7 +4140,15 @@ mod tests {
         );
         assert_ne!(cookie_preset.texture(), level_three_preset.texture());
 
-        for scene in [&selector, &blue, &combined] {
+        // The world selector has its own, sharper sky (see `selector`).
+        let selector_skybox = selector.skybox().unwrap();
+        assert_eq!(
+            selector_skybox.texture(),
+            super::selector_skybox().unwrap().texture()
+        );
+        assert!(selector_skybox.texture().width() > super::SPACE_SKYBOX_WIDTH);
+
+        for scene in [&blue, &combined] {
             let skybox = scene.skybox().unwrap();
 
             assert_eq!(skybox.texture().width(), super::SPACE_SKYBOX_WIDTH);
@@ -4358,9 +4219,15 @@ mod tests {
 
     #[test]
     fn space_lighting_uses_visible_sun_direction_as_key() {
-        let selector = build_galaxy_selector_scene().unwrap();
+        // The combined diorama is lit by the sun of the space skybox; the
+        // world selector has its own flat cartoon lighting now.
+        let (combined, _) = build_space_levels_scene_with_metadata().unwrap();
         let expected_direction = SPACE_SUN_DIRECTION.normalized();
-        let key_light = selector.lights()[0];
+        let key_light = *combined
+            .lights()
+            .iter()
+            .find(|light| light.position == sun_light_position(10.0))
+            .unwrap();
         let actual_direction = key_light.position.normalized();
 
         assert!(actual_direction.dot(expected_direction) > 0.999);

@@ -123,14 +123,6 @@ const MOON_CRATERS: [(f32, f32, f32); 8] = [
     (0.62, 0.36, 0.09),
     (-0.30, -0.02, 0.08),
 ];
-/// Rings that outline each atmosphere, seen from the default camera, and the
-/// fainter inner ring around its asteroid.
-const RIM_SEGMENTS: usize = 72;
-const RIM_TUBE_RADIUS: f32 = 0.014;
-const INNER_RING_SEGMENTS: usize = 40;
-const INNER_RING_SCALE: f32 = 0.45;
-const INNER_RING_TUBE_RADIUS: f32 = 0.010;
-const INNER_RING_DEPTH: f32 = -0.30;
 const LEAF_TEXTURE_WIDTH: usize = 256;
 const LEAF_TEXTURE_HEIGHT: usize = 128;
 
@@ -149,8 +141,6 @@ struct LevelOneMaterials {
     leaves: usize,
     rock: usize,
     atmosphere: usize,
-    rim: usize,
-    inner_ring: usize,
     birds: [SongbirdMaterials; LEVEL_ONE_BIRD_COUNT],
     smoke: usize,
     wood_smoke: usize,
@@ -172,7 +162,6 @@ pub(crate) struct LevelOneParts {
     pub right_asteroid: VoxelBodyParts,
     pub rock: VoxelBodyParts,
     pub atmosphere_ids: [usize; 2],
-    pub ring_parts: usize,
     pub slingshot_parts: usize,
 }
 
@@ -248,7 +237,6 @@ pub(crate) fn build_level_one_with_parts()
     {
         parts.atmosphere_ids[index] = scene.object_count();
         scene.add_sphere(Sphere::new(center, radius, materials.atmosphere)?)?;
-        parts.ring_parts += add_atmosphere_rings(&mut scene, center, radius, materials)?;
     }
 
     let first_slingshot_part = scene.object_count();
@@ -549,26 +537,6 @@ fn register_level_one_materials(
         1.0,
         Color::new(0.070, 0.150, 0.220),
     ))?;
-    // Rings that outline the atmospheres glow a little, like their edges in
-    // the reference.
-    let rim = scene.add_material(Material::new(
-        Color::new(0.72, 0.94, 1.0),
-        0.30,
-        30.0,
-        0.0,
-        0.30,
-        1.0,
-        Color::new(0.300, 0.480, 0.580),
-    ))?;
-    let inner_ring = scene.add_material(Material::new(
-        Color::new(0.72, 0.94, 1.0),
-        0.10,
-        20.0,
-        0.0,
-        0.70,
-        1.0,
-        Color::new(0.120, 0.200, 0.260),
-    ))?;
     let birds = register_bird_materials(scene, space)?;
     let smoke = scene.add_material(Material::new(
         Color::new(0.95, 0.96, 1.0),
@@ -594,15 +562,13 @@ fn register_level_one_materials(
         leaves,
         rock,
         atmosphere,
-        rim,
-        inner_ring,
         birds,
         smoke,
         wood_smoke,
     })
 }
 
-fn sphere_texture(
+pub(super) fn sphere_texture(
     width: usize,
     height: usize,
     color_at: fn(Vec3) -> Color,
@@ -621,7 +587,7 @@ fn sphere_texture(
 }
 
 /// Bushy leaves in four greens, with dark gaps between them.
-fn leaf_color(direction: Vec3) -> Color {
+pub(super) fn leaf_color(direction: Vec3) -> Color {
     let leaf = value_noise_3d(direction * 5.0 + Vec3::new(3.1, 1.7, 5.3)) * 0.6
         + value_noise_3d(direction * 12.0 + Vec3::new(7.2, 2.9, 0.4)) * 0.4;
     let gap = Color::new(0.07, 0.24, 0.07);
@@ -714,77 +680,6 @@ fn slingshot_elastic() -> Result<Elastic, SpaceBuildError> {
         pouch_rest,
         pouch_half: pouch_end - pouch_rest,
     })
-}
-
-/// A glowing ring on the silhouette of an atmosphere, as seen from the default
-/// camera, and a fainter ring around its asteroid. Returns the parts added.
-fn add_atmosphere_rings(
-    scene: &mut Scene,
-    center: Vec3,
-    radius: f32,
-    materials: LevelOneMaterials,
-) -> Result<usize, SpaceBuildError> {
-    let camera = level_one_orbit_camera(1.0).position();
-    let offset = camera - center;
-    let distance = offset.length().max(radius * 1.01);
-    let axis = offset / distance;
-    // The silhouette is the circle where the view rays touch the sphere.
-    let rim_center = center + axis * (radius * radius / distance);
-    let rim_radius = radius * (1.0 - (radius / distance).powi(2)).max(0.0).sqrt() + RIM_TUBE_RADIUS;
-    let first = scene.object_count();
-
-    add_ring(
-        scene,
-        rim_center,
-        axis,
-        rim_radius,
-        RIM_SEGMENTS,
-        RIM_TUBE_RADIUS,
-        materials.rim,
-    )?;
-    add_ring(
-        scene,
-        center + Vec3::new(0.0, 0.0, INNER_RING_DEPTH),
-        axis,
-        radius * INNER_RING_SCALE,
-        INNER_RING_SEGMENTS,
-        INNER_RING_TUBE_RADIUS,
-        materials.inner_ring,
-    )?;
-
-    Ok(scene.object_count() - first)
-}
-
-/// Ring of cylinders around `axis`. Each cylinder is a little longer than
-/// its side of the polygon so the joints stay closed.
-fn add_ring(
-    scene: &mut Scene,
-    center: Vec3,
-    axis: Vec3,
-    radius: f32,
-    segments: usize,
-    tube_radius: f32,
-    material_id: usize,
-) -> Result<(), SpaceBuildError> {
-    let basis = basis_with_up(axis)?;
-    let point = |index: usize| {
-        let angle = index as f32 * std::f32::consts::TAU / segments as f32;
-        center + (basis.right() * angle.cos() + basis.forward() * angle.sin()) * radius
-    };
-
-    for index in 0..segments {
-        let (start, end) = (point(index), point(index + 1));
-        let overlap = (end - start) * 0.06;
-        add_segment(
-            scene,
-            start - overlap,
-            end + overlap,
-            tube_radius,
-            material_id,
-        )?;
-    }
-
-    Ok(())
 }
 
 fn add_level_one_lighting(scene: &mut Scene) {
@@ -919,7 +814,7 @@ fn add_elastic(
     )
 }
 
-fn add_segment(
+pub(super) fn add_segment(
     scene: &mut Scene,
     start: Vec3,
     end: Vec3,
