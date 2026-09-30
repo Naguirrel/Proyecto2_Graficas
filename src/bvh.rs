@@ -136,6 +136,16 @@ fn primitive_bounds(primitive: &Primitive) -> Option<Bounds> {
             let radius = shape.circumradius() + BOUNDS_PADDING;
             Bounds::around(shape.center(), Vec3::new(radius, radius, radius))
         }
+        Primitive::Crystal(shape) => {
+            let basis = shape.orientation();
+            Bounds::around(
+                shape.center(),
+                oriented_extent(
+                    [basis.right(), basis.up(), basis.forward()],
+                    shape.half_extents(),
+                ),
+            )
+        }
     }
 }
 

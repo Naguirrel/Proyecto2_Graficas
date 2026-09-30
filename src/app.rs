@@ -444,6 +444,7 @@ fn build_planet_scene(planet: PlanetType) -> Result<Scene, space::SpaceBuildErro
         PlanetType::BlueMoon => space::build_blue_moon_scene(),
         PlanetType::CookieWorld => space::build_cookie_world_scene(),
         PlanetType::AsteroidBelt => space::build_level_three_scene(),
+        PlanetType::CosmicCrystals => space::build_level_four_scene(),
     }
 }
 
@@ -452,6 +453,7 @@ fn planet_orbit_camera(planet: PlanetType, aspect_ratio: f32) -> OrbitCamera {
         PlanetType::BlueMoon => space::blue_moon_orbit_camera(aspect_ratio),
         PlanetType::CookieWorld => space::cookie_world_orbit_camera(aspect_ratio),
         PlanetType::AsteroidBelt => space::level_three_orbit_camera(aspect_ratio),
+        PlanetType::CosmicCrystals => space::level_four_orbit_camera(aspect_ratio),
     }
 }
 
@@ -462,7 +464,7 @@ struct LevelUiMetadata {
     name: &'static str,
 }
 
-fn selector_level_ui_metadata() -> [LevelUiMetadata; 3] {
+fn selector_level_ui_metadata() -> [LevelUiMetadata; 4] {
     [
         LevelUiMetadata {
             planet: PlanetType::BlueMoon,
@@ -478,6 +480,11 @@ fn selector_level_ui_metadata() -> [LevelUiMetadata; 3] {
             planet: PlanetType::AsteroidBelt,
             level_number: 3,
             name: "Cinturon de Asteroides",
+        },
+        LevelUiMetadata {
+            planet: PlanetType::CosmicCrystals,
+            level_number: 4,
+            name: "Cristales Cosmicos",
         },
     ]
 }
@@ -510,6 +517,7 @@ fn performance_scene_label(scene_state: SceneState) -> &'static str {
         SceneState::Planet(PlanetType::BlueMoon) => "BlueMoon",
         SceneState::Planet(PlanetType::CookieWorld) => "CookieWorld",
         SceneState::Planet(PlanetType::AsteroidBelt) => "AsteroidBelt",
+        SceneState::Planet(PlanetType::CosmicCrystals) => "CosmicCrystals",
     }
 }
 
@@ -1017,6 +1025,7 @@ fn draw_level_name(
         PlanetType::BlueMoon => Color::new(42, 72, 94, 242),
         PlanetType::CookieWorld => Color::new(111, 67, 37, 242),
         PlanetType::AsteroidBelt => Color::new(76, 57, 83, 242),
+        PlanetType::CosmicCrystals => Color::new(104, 48, 108, 242),
     };
 
     drawing.draw_rectangle(
@@ -1190,11 +1199,12 @@ fn project_world_to_pixel(
 #[cfg(test)]
 mod tests {
     use super::{
-        FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, RenderQuality, Viewport,
-        build_planet_scene, controls_lines, interactive_dimensions, level_ui_metadata,
-        mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel, orbit_drag_button,
-        pick_selector_world, project_world_to_pixel, render_dimensions_for, render_viewport,
-        return_to_selector, scene_state_label, selector_level_ui_metadata,
+        FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, LEVEL_NAME_FONT_SIZE,
+        RenderQuality, Viewport, approximate_text_width, build_planet_scene, controls_lines,
+        interactive_dimensions, level_ui_metadata, mouse_position_to_framebuffer_pixel,
+        mouse_to_framebuffer_pixel, orbit_drag_button, performance_scene_label,
+        pick_selector_world, planet_orbit_camera, project_world_to_pixel, render_dimensions_for,
+        render_viewport, return_to_selector, scene_state_label, selector_level_ui_metadata,
         selector_planet_under_mouse, write_framebuffer_rgba,
     };
     use crate::{
@@ -1587,10 +1597,10 @@ mod tests {
     }
 
     #[test]
-    fn selector_ui_metadata_declares_three_named_levels() {
+    fn selector_ui_metadata_declares_four_named_levels() {
         let metadata = selector_level_ui_metadata();
 
-        assert_eq!(metadata.len(), 3);
+        assert_eq!(metadata.len(), 4);
         assert_eq!(metadata[0].planet, PlanetType::BlueMoon);
         assert_eq!(metadata[0].level_number, 1);
         assert_eq!(metadata[0].name, "Luna Azul");
@@ -1600,6 +1610,9 @@ mod tests {
         assert_eq!(metadata[2].planet, PlanetType::AsteroidBelt);
         assert_eq!(metadata[2].level_number, 3);
         assert_eq!(metadata[2].name, "Cinturon de Asteroides");
+        assert_eq!(metadata[3].planet, PlanetType::CosmicCrystals);
+        assert_eq!(metadata[3].level_number, 4);
+        assert_eq!(metadata[3].name, "Cristales Cosmicos");
     }
 
     #[test]
@@ -1613,10 +1626,10 @@ mod tests {
     }
 
     #[test]
-    fn selector_still_has_three_clickable_planets() {
+    fn selector_has_four_clickable_planets() {
         let worlds = galaxy_selector_worlds();
 
-        assert_eq!(worlds.len(), 3);
+        assert_eq!(worlds.len(), 4);
         assert!(worlds.iter().all(|world| world.radius > 0.0));
         assert!(worlds.iter().all(|world| world.level_number > 0));
     }
@@ -1824,6 +1837,64 @@ mod tests {
     }
 
     #[test]
+    fn ray_picking_selects_level_four_when_ray_points_to_fourth_selector() {
+        let worlds = galaxy_selector_worlds();
+        let level_four = worlds
+            .iter()
+            .find(|world| world.planet == PlanetType::CosmicCrystals)
+            .unwrap();
+        let origin = Vec3::new(level_four.center.x, level_four.center.y, 8.0);
+        let ray = Ray::new(origin, level_four.center - origin);
+
+        assert_eq!(
+            pick_selector_world(&ray, &worlds),
+            Some(PlanetType::CosmicCrystals)
+        );
+    }
+
+    #[test]
+    fn fourth_planet_builds_crystal_scene_with_its_own_camera() {
+        let scene = build_planet_scene(PlanetType::CosmicCrystals).unwrap();
+
+        assert!(scene.object_count() > 150);
+        assert!(scene.crystal_count() > 100);
+        assert!(scene.skybox().is_some());
+        assert!(scene.lights().len() >= 3);
+        assert_eq!(
+            planet_orbit_camera(PlanetType::CosmicCrystals, 16.0 / 9.0),
+            space::level_four_orbit_camera(16.0 / 9.0)
+        );
+        assert_eq!(
+            scene_state_label(SceneState::Planet(PlanetType::CosmicCrystals)),
+            "Cristales Cosmicos"
+        );
+        assert_eq!(
+            performance_scene_label(SceneState::Planet(PlanetType::CosmicCrystals)),
+            "CosmicCrystals"
+        );
+    }
+
+    #[test]
+    fn selector_level_names_do_not_overlap_at_full_hd() {
+        let (width, height) = (1920, 1080);
+        let camera = space::galaxy_selector_orbit_camera(width as f32 / height as f32).to_camera();
+        let spans: Vec<_> = galaxy_selector_worlds()
+            .iter()
+            .map(|world| {
+                let (x, _) = project_world_to_pixel(camera, world.center, width, height).unwrap();
+                let name = level_ui_metadata(world.planet).name;
+                let half_width =
+                    (approximate_text_width(name, LEVEL_NAME_FONT_SIZE) + 48).max(194) / 2;
+                (x as i32 - half_width, x as i32 + half_width)
+            })
+            .collect();
+
+        assert!(spans.windows(2).all(|pair| pair[0].1 < pair[1].0));
+        assert!(spans[0].0 > 0);
+        assert!(spans[spans.len() - 1].1 < width as i32);
+    }
+
+    #[test]
     fn third_planet_builds_asteroid_bridge_scene() {
         let scene = build_planet_scene(PlanetType::AsteroidBelt).unwrap();
 
@@ -1838,6 +1909,7 @@ mod tests {
             PlanetType::BlueMoon,
             PlanetType::CookieWorld,
             PlanetType::AsteroidBelt,
+            PlanetType::CosmicCrystals,
         ] {
             let scene = build_planet_scene(planet).unwrap();
 
@@ -1875,7 +1947,7 @@ mod tests {
 
         assert!(changed);
         assert_eq!(scene_state, SceneState::Galaxy);
-        assert_eq!(scene.object_count(), 6);
+        assert_eq!(scene.object_count(), 8);
         assert_eq!(
             orbit_camera,
             space::galaxy_selector_orbit_camera(aspect_ratio)

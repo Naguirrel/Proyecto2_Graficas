@@ -1,8 +1,8 @@
 use crate::{
-    bvh::Bvh, color::Color, cone::Cone, cube::Cube, curved_tetrahedron::CurvedTetrahedron,
-    cylinder::Cylinder, intersection::Intersection, light::PointLight, material::Material,
-    oriented_box::OrientedBox, primitive::Primitive, ray::Ray, skybox::Skybox, sphere::Sphere,
-    texture::Texture,
+    bvh::Bvh, color::Color, cone::Cone, crystal::Crystal, cube::Cube,
+    curved_tetrahedron::CurvedTetrahedron, cylinder::Cylinder, intersection::Intersection,
+    light::PointLight, material::Material, oriented_box::OrientedBox, primitive::Primitive,
+    ray::Ray, skybox::Skybox, sphere::Sphere, texture::Texture,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,6 +70,10 @@ impl Scene {
         tetrahedron: CurvedTetrahedron,
     ) -> Result<(), SceneError> {
         self.add_primitive(tetrahedron.into())
+    }
+
+    pub fn add_crystal(&mut self, crystal: Crystal) -> Result<(), SceneError> {
+        self.add_primitive(crystal.into())
     }
 
     pub fn add_primitive(&mut self, primitive: Primitive) -> Result<(), SceneError> {
@@ -140,6 +144,11 @@ impl Scene {
             .filter_map(Primitive::as_curved_tetrahedron)
     }
 
+    /// Iterates over crystal primitives only, without allocating.
+    pub fn crystals(&self) -> impl Iterator<Item = &Crystal> {
+        self.objects.iter().filter_map(Primitive::as_crystal)
+    }
+
     pub fn object_count(&self) -> usize {
         self.objects.len()
     }
@@ -181,6 +190,10 @@ impl Scene {
 
     pub fn curved_tetrahedron_count(&self) -> usize {
         self.curved_tetrahedra().count()
+    }
+
+    pub fn crystal_count(&self) -> usize {
+        self.crystals().count()
     }
 
     pub fn materials(&self) -> &[Material] {
@@ -251,6 +264,7 @@ mod tests {
         basis::Basis3,
         color::Color,
         cone::Cone,
+        crystal::{Crystal, CrystalShape},
         cube::Cube,
         curved_tetrahedron::CurvedTetrahedron,
         cylinder::Cylinder,
@@ -307,6 +321,44 @@ mod tests {
 
     fn unit_curved_tetrahedron(material_id: usize) -> CurvedTetrahedron {
         CurvedTetrahedron::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), material_id).unwrap()
+    }
+
+    fn unit_crystal(material_id: usize) -> Crystal {
+        Crystal::new(
+            Vec3::new(0.0, -1.0, 0.0),
+            CrystalShape {
+                radius: 1.0,
+                body_height: 1.2,
+                tip_height: 0.8,
+                tip_cut: 0.0,
+                base_tip_height: 0.0,
+                sides: 6,
+            },
+            Basis3::identity(),
+            material_id,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn crystals_are_added_counted_and_hit_through_the_bvh() {
+        let mut scene = diffuse_scene();
+        scene.add_crystal(unit_crystal(0)).unwrap();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.7, 5.0), Vec3::new(0.0, 0.0, -1.0));
+        let linear = scene.intersect(&ray, 0.001, 100.0);
+
+        scene.build_bvh();
+
+        assert_eq!(scene.crystal_count(), 1);
+        assert_eq!(scene.crystals().count(), 1);
+        assert_eq!(scene.sphere_count(), 1);
+        assert!(linear.is_some());
+        assert_eq!(scene.intersect(&ray, 0.001, 100.0), linear);
+        assert_eq!(
+            scene.add_crystal(unit_crystal(9)),
+            Err(SceneError::MissingMaterial { material_id: 9 })
+        );
     }
 
     #[test]
@@ -741,6 +793,7 @@ mod tests {
             Primitive::from(unit_cylinder(0)),
             Primitive::from(unit_cone(0)),
             Primitive::from(unit_curved_tetrahedron(0)),
+            Primitive::from(unit_crystal(0)),
         ] {
             let mut scene = diffuse_scene();
             scene.add_primitive(primitive).unwrap();
@@ -774,6 +827,7 @@ mod tests {
         scene
             .add_curved_tetrahedron(unit_curved_tetrahedron(0))
             .unwrap();
+        scene.add_crystal(unit_crystal(0)).unwrap();
 
         let rays: Vec<_> = (-40..=40)
             .flat_map(|x| {
