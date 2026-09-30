@@ -10,6 +10,7 @@ pub mod cube;
 pub mod curved_tetrahedron;
 pub mod cylinder;
 pub mod framebuffer;
+pub mod game;
 pub mod intersection;
 pub mod light;
 pub mod material;

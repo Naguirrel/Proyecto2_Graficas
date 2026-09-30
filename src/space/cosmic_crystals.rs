@@ -1,5 +1,6 @@
 //! Level four, Cristales Cosmicos: a purple crystal system traced from a
-//! screenshot of the original level, without its pigs and birds.
+//! screenshot of the original level, with three birds at the slingshot and
+//! four pigs among the crystals.
 //!
 //! The level lies in the XY plane like the picture: Y up and +Z towards the
 //! default camera. `reference_point` maps a pixel of the 1600x1200 reference
@@ -13,9 +14,9 @@
 //! bubble and inside each glass planet) has its own lights.
 
 use super::{
-    ROCK_LUMP_OFFSET, SpaceBuildError, SpaceMaterials, add_slingshot, add_voxel_rock,
-    base_space_scene_with_skybox, basis_with_up, smooth_hash, smoothstep, sphere_direction_from_uv,
-    value_noise_3d,
+    ROCK_LUMP_OFFSET, SpaceBuildError, SpaceMaterials, add_slingshot, add_space_pig,
+    add_voxel_rock, base_space_scene_with_skybox, basis_with_up, birds, smooth_hash, smoothstep,
+    sphere_direction_from_uv, value_noise_3d,
     voxel::{self, VoxelBall, VoxelBody, VoxelBodyParts},
 };
 use crate::{
@@ -117,6 +118,46 @@ const LEVEL_FOUR_MIN_CUBES_ACROSS: f32 = 7.0;
 
 const LEVEL_FOUR_SLINGSHOT_SCALE: f32 = 1.6;
 const LEVEL_FOUR_SLINGSHOT_YAW_RADIANS: f32 = -0.35;
+/// The loaded bird looks up and right, towards the central bubble.
+const LEVEL_FOUR_BIRD_AIM: Vec3 = Vec3::new(0.58, 0.81, 0.0);
+/// Where the other two birds wait on the launch planet, left of its crystals:
+/// angle and depth in degrees, like the crystals.
+const LEVEL_FOUR_WAITING_BIRDS: [(f32, f32); 2] = [(-40.0, 22.0), (-55.0, 26.0)];
+
+pub const LEVEL_FOUR_PIG_COUNT: usize = 4;
+
+/// Where a level four pig stands.
+#[derive(Debug, Clone, Copy)]
+enum PigSpot {
+    /// On a planet of cubes: which planet, angle and depth in degrees.
+    Planet(PigPlanet, f32, f32),
+    /// Resting on the floating contraption: center pixel and up direction.
+    Floating((f32, f32), Vec3),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PigPlanet {
+    CentralGlass,
+    Right,
+    LowerGlass,
+}
+
+/// The four pigs: a medium one on the left of the central glass planet, a
+/// big one under the right planet, a small one on top of the lower glass
+/// planet and a small one on the floating contraption.
+const LEVEL_FOUR_PIGS: [(PigSpot, f32); LEVEL_FOUR_PIG_COUNT] = [
+    (PigSpot::Planet(PigPlanet::CentralGlass, 268.0, 14.0), 0.24),
+    (PigSpot::Planet(PigPlanet::Right, 132.0, 18.0), 0.30),
+    (PigSpot::Planet(PigPlanet::LowerGlass, 18.0, 16.0), 0.20),
+    (
+        PigSpot::Floating((407.0, 334.0), Vec3::new(0.35, 0.94, 0.0)),
+        0.18,
+    ),
+];
+/// Pigs sink this fraction of their radius into the ground.
+const PIG_GROUND_SINK: f32 = 0.05;
+/// Pigs look at the camera, turned a little towards the slingshot.
+const PIG_LOOK: Vec3 = Vec3::new(-0.28, -0.12, 1.0);
 
 /// Colors of the crystal materials, from light to dark.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -523,6 +564,10 @@ pub(crate) struct LevelFourMetadata {
     pub asteroid_parts: usize,
     pub ice_chunk_parts: usize,
     pub tnt_parts: usize,
+    pub bird_count: usize,
+    pub bird_parts: usize,
+    pub pig_count: usize,
+    pub pig_parts: usize,
 }
 
 pub fn build_level_four_scene() -> Result<Scene, SpaceBuildError> {
@@ -542,6 +587,7 @@ pub(crate) fn build_level_four_scene_with_metadata()
     add_lower_bubble(&mut scene, &mut metadata, materials, level)?;
     add_floating_contraption(&mut scene, &mut metadata, materials, level)?;
     add_loose_asteroids(&mut scene, &mut metadata, materials, level)?;
+    add_level_four_pigs(&mut scene, &mut metadata, materials, level)?;
     add_level_four_lighting(&mut scene);
 
     scene.build_bvh();
@@ -744,6 +790,23 @@ fn add_launch_planet(
         materials,
     )?;
     metadata.slingshot_parts += parts.total();
+
+    // One bird loaded in the slingshot and two waiting on the planet.
+    let waiting = LEVEL_FOUR_WAITING_BIRDS.map(|(angle, depth)| surface_direction(angle, depth));
+    let bird_materials = birds::register_bird_materials(scene, materials)?;
+    metadata.bird_parts += birds::add_slingshot_birds(
+        scene,
+        birds::SlingshotBirds {
+            frame: table_frame,
+            yaw_radians: LEVEL_FOUR_SLINGSHOT_YAW_RADIANS,
+            scale: LEVEL_FOUR_SLINGSHOT_SCALE,
+            aim: LEVEL_FOUR_BIRD_AIM,
+            ground: &body,
+            waiting_directions: &waiting,
+        },
+        bird_materials,
+    )?;
+    metadata.bird_count += birds::BIRD_COUNT;
 
     Ok(())
 }
@@ -1022,6 +1085,60 @@ fn add_loose_asteroids(
     }
 
     Ok(())
+}
+
+/// The pigs of level four, standing on the top of the cubes of their planet
+/// or on the floating contraption.
+fn add_level_four_pigs(
+    scene: &mut Scene,
+    metadata: &mut LevelFourMetadata,
+    materials: SpaceMaterials,
+    level: LevelFourMaterials,
+) -> Result<(), SpaceBuildError> {
+    let first = scene.object_count();
+
+    for (index, (center, up, radius)) in level_four_pig_placements(level)?.into_iter().enumerate() {
+        let look = PIG_LOOK - up * PIG_LOOK.dot(up);
+        let forward = look.normalized();
+        let basis = Basis3::new(up.cross(forward), up, forward)?;
+        add_space_pig(scene, center, radius, basis, materials)?;
+        metadata.pig_count = index + 1;
+    }
+    metadata.pig_parts = scene.object_count() - first;
+
+    Ok(())
+}
+
+/// Center, up direction and radius of every pig.
+fn level_four_pig_placements(
+    level: LevelFourMaterials,
+) -> Result<[(Vec3, Vec3, f32); LEVEL_FOUR_PIG_COUNT], SpaceBuildError> {
+    let central = central_glass_body(level.glass)?;
+    let right = right_planet_body(level.dark_planet)?;
+    let lower = lower_glass_body(level.glass)?;
+    let mut placements = [(Vec3::ZERO, Vec3::new(0.0, 1.0, 0.0), 0.0); LEVEL_FOUR_PIG_COUNT];
+
+    for (placement, (spot, radius)) in placements.iter_mut().zip(LEVEL_FOUR_PIGS) {
+        *placement = match spot {
+            PigSpot::Planet(planet, angle, depth) => {
+                let body = match planet {
+                    PigPlanet::CentralGlass => &central,
+                    PigPlanet::Right => &right,
+                    PigPlanet::LowerGlass => &lower,
+                };
+                let up = surface_direction(angle, depth);
+                let ground = body.surface_distance(body.origin(), up);
+                (
+                    body.origin() + up * (ground + radius * (1.0 - PIG_GROUND_SINK)),
+                    up,
+                    radius,
+                )
+            }
+            PigSpot::Floating(center, up) => (pixel(center), up.normalized(), radius),
+        };
+    }
+
+    Ok(placements)
 }
 
 /// Bottom left planet with the slingshot, made of cubes.
@@ -1532,12 +1649,13 @@ mod tests {
         LEVEL_FOUR_GLASS_CUBE_EDGE, LEVEL_FOUR_LAUNCH_PLANET_CENTER,
         LEVEL_FOUR_LAUNCH_PLANET_RADIUS, LEVEL_FOUR_LOWER_BUBBLE_CENTER,
         LEVEL_FOUR_LOWER_BUBBLE_RADIUS, LEVEL_FOUR_LOWER_GLASS_CENTER,
-        LEVEL_FOUR_LOWER_GLASS_RADIUS, LEVEL_FOUR_MIN_CUBES_ACROSS, LEVEL_FOUR_RIGHT_BUBBLE_CENTER,
-        LEVEL_FOUR_RIGHT_BUBBLE_RADIUS, LEVEL_FOUR_RIGHT_PLANET_CENTER,
-        LEVEL_FOUR_RIGHT_PLANET_RADIUS, LOOSE_ASTEROIDS, LOWER_GLASS_LIGHT_OFFSET,
-        build_level_four_scene_with_metadata, launch_planet_body, level_four_orbit_camera,
-        level_four_skybox_color, pixel, reference_point, register_level_four_materials,
-        surface_direction,
+        LEVEL_FOUR_LOWER_GLASS_RADIUS, LEVEL_FOUR_MIN_CUBES_ACROSS, LEVEL_FOUR_PIG_COUNT,
+        LEVEL_FOUR_PIGS, LEVEL_FOUR_RIGHT_BUBBLE_CENTER, LEVEL_FOUR_RIGHT_BUBBLE_RADIUS,
+        LEVEL_FOUR_RIGHT_PLANET_CENTER, LEVEL_FOUR_RIGHT_PLANET_RADIUS, LOOSE_ASTEROIDS,
+        LOWER_GLASS_LIGHT_OFFSET, PigPlanet, PigSpot, build_level_four_scene_with_metadata,
+        central_glass_body, launch_planet_body, level_four_orbit_camera, level_four_pig_placements,
+        level_four_skybox_color, lower_glass_body, pixel, reference_point,
+        register_level_four_materials, right_planet_body, surface_direction,
     };
     use crate::{
         math::Vec3,
@@ -1552,20 +1670,25 @@ mod tests {
     }
 
     #[test]
-    fn level_four_scene_builds_without_pigs_or_birds() {
+    fn level_four_scene_has_pigs_and_birds() {
         let (scene, metadata) = build_level_four_scene_with_metadata().unwrap();
         let shared = register_space_materials(&mut Scene::new()).unwrap();
-        let character_materials = [shared.pig, shared.snout, shared.eye, shared.pupil];
+        let pig_bodies = scene
+            .objects()
+            .iter()
+            .filter_map(|object| object.as_sphere())
+            .filter(|sphere| sphere.material_id() == shared.pig)
+            .count();
 
         assert!(scene.skybox().is_some());
         assert!(scene.object_count() > 150);
         assert!(scene.curved_tetrahedron_count() == 0);
-        assert!(
-            scene
-                .objects()
-                .iter()
-                .all(|object| !character_materials.contains(&object.material_id()))
-        );
+        assert_eq!(metadata.pig_count, LEVEL_FOUR_PIG_COUNT);
+        assert_eq!(pig_bodies, LEVEL_FOUR_PIG_COUNT);
+        // Body, snout, two eyes with pupils and two ears per pig.
+        assert_eq!(metadata.pig_parts, LEVEL_FOUR_PIG_COUNT * 8);
+        assert_eq!(metadata.bird_count, 3);
+        assert!(metadata.bird_parts >= 3 * 20);
         assert!(metadata.crystal_count >= 60);
         assert!(metadata.embedded_gem_count >= 40);
         assert_eq!(metadata.cut_gem_count, 3);
@@ -1578,6 +1701,47 @@ mod tests {
             scene.crystal_count(),
             metadata.crystal_count + metadata.embedded_gem_count + metadata.cut_gem_count + 1
         );
+    }
+
+    #[test]
+    fn planet_pigs_stand_on_their_cubes_inside_their_bubbles() {
+        let mut scene = Scene::new();
+        register_space_materials(&mut scene).unwrap();
+        let level = register_level_four_materials(&mut scene).unwrap();
+        let placements = level_four_pig_placements(level).unwrap();
+
+        for ((center, up, radius), (spot, _)) in placements.into_iter().zip(LEVEL_FOUR_PIGS) {
+            assert!((up.length() - 1.0).abs() < 1.0e-4);
+            let PigSpot::Planet(planet, _, _) = spot else {
+                continue;
+            };
+            let (body, bubble_center, bubble_radius) = match planet {
+                PigPlanet::CentralGlass => (
+                    central_glass_body(level.glass).unwrap(),
+                    LEVEL_FOUR_CENTRAL_BUBBLE_CENTER,
+                    LEVEL_FOUR_CENTRAL_BUBBLE_RADIUS,
+                ),
+                PigPlanet::Right => (
+                    right_planet_body(level.dark_planet).unwrap(),
+                    LEVEL_FOUR_RIGHT_BUBBLE_CENTER,
+                    LEVEL_FOUR_RIGHT_BUBBLE_RADIUS,
+                ),
+                PigPlanet::LowerGlass => (
+                    lower_glass_body(level.glass).unwrap(),
+                    LEVEL_FOUR_LOWER_BUBBLE_CENTER,
+                    LEVEL_FOUR_LOWER_BUBBLE_RADIUS,
+                ),
+            };
+            let ground = body.surface_distance(body.origin(), up);
+            let height = (center - body.origin()).length();
+
+            assert!(
+                height > ground + radius * 0.9,
+                "pig at {center:?} is buried"
+            );
+            assert!(height < ground + radius * 1.1, "pig at {center:?} floats");
+            assert!((center - bubble_center).length() + radius < bubble_radius);
+        }
     }
 
     #[test]

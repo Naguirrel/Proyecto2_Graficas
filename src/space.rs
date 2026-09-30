@@ -19,11 +19,16 @@ use crate::{
     texture::{Texture, TextureError, WrapMode},
 };
 
+mod birds;
 mod blue_moon;
 mod cosmic_crystals;
+mod level_one;
 mod voxel;
 
 pub use cosmic_crystals::{build_level_four_scene, level_four_orbit_camera, level_four_skybox};
+pub use level_one::{
+    LevelOneGame, build_level_one, build_level_one_scene, level_one_layout, level_one_orbit_camera,
+};
 pub use voxel::VoxelError;
 use voxel::{VoxelBall, VoxelBody, VoxelBodyParts};
 
@@ -375,6 +380,12 @@ pub const LEVEL_THREE_SLINGSHOT_ASTEROID_RADIUS: f32 = 0.50;
 const LEVEL_THREE_SLINGSHOT_DIRECTION: Vec3 = Vec3::new(-0.05, 1.0, 0.05);
 const LEVEL_THREE_SLINGSHOT_SCALE: f32 = 1.3;
 const LEVEL_THREE_SLINGSHOT_EMBED: f32 = 0.05;
+/// The loaded bird looks up and right, towards the bridge.
+const LEVEL_THREE_BIRD_AIM: Vec3 = Vec3::new(0.45, 1.0, 0.0);
+/// The other two birds wait on the left of the slingshot asteroid, turned a
+/// little towards the camera.
+const LEVEL_THREE_WAITING_BIRDS: [Vec3; 2] =
+    [Vec3::new(-0.88, 0.38, 0.30), Vec3::new(-0.80, -0.35, 0.55)];
 /// Lights inside the level three atmospheres, as offsets from the asteroid
 /// they light. The lens light sits where both atmospheres overlap, at
 /// `LEVEL_THREE_LENS_DISTANCE` from the main asteroid along the bridge.
@@ -569,6 +580,8 @@ pub(crate) struct SpaceSceneMetadata {
     pub level_three_secondary_atmosphere_id: Option<usize>,
     pub level_three_slingshot_asteroid: Option<VoxelBodyParts>,
     pub level_three_slingshot_parts: usize,
+    pub level_three_bird_count: usize,
+    pub level_three_bird_parts: usize,
     pub blue_moon_small_moon: Option<VoxelBodyParts>,
     pub blue_moon_soil_mound_count: usize,
     pub blue_moon_grass_tuft_count: usize,
@@ -936,18 +949,27 @@ fn selector_skybox_texture() -> Result<Texture, TextureError> {
 }
 
 fn generate_space_skybox(color_at: fn(f32, f32) -> Color) -> Result<Texture, TextureError> {
-    let mut pixels = Vec::with_capacity(SPACE_SKYBOX_WIDTH * SPACE_SKYBOX_HEIGHT);
+    generate_skybox_texture(SPACE_SKYBOX_WIDTH, SPACE_SKYBOX_HEIGHT, color_at)
+}
 
-    for y in 0..SPACE_SKYBOX_HEIGHT {
-        let v = 1.0 - y as f32 / (SPACE_SKYBOX_HEIGHT - 1) as f32;
+/// Equirectangular sky of `width` x `height` texels from a color per UV.
+fn generate_skybox_texture(
+    width: usize,
+    height: usize,
+    color_at: fn(f32, f32) -> Color,
+) -> Result<Texture, TextureError> {
+    let mut pixels = Vec::with_capacity(width * height);
 
-        for x in 0..SPACE_SKYBOX_WIDTH {
-            let u = x as f32 / (SPACE_SKYBOX_WIDTH - 1) as f32;
+    for y in 0..height {
+        let v = 1.0 - y as f32 / (height - 1) as f32;
+
+        for x in 0..width {
+            let u = x as f32 / (width - 1) as f32;
             pixels.push(color_at(u, v));
         }
     }
 
-    Texture::new(SPACE_SKYBOX_WIDTH, SPACE_SKYBOX_HEIGHT, pixels)
+    Texture::new(width, height, pixels)
 }
 
 fn selector_skybox_color(u: f32, v: f32) -> Color {
@@ -1598,12 +1620,42 @@ fn add_slingshot(
     scale: f32,
     materials: SpaceMaterials,
 ) -> Result<SlingshotParts, SpaceBuildError> {
+    add_slingshot_parts(scene, frame, yaw_radians, scale, materials, true)
+}
+
+/// Slingshot without the elastic bands and the pouch, for a level that moves
+/// them with the loaded bird.
+fn add_slingshot_without_elastic(
+    scene: &mut Scene,
+    frame: RadialFrame,
+    yaw_radians: f32,
+    scale: f32,
+    materials: SpaceMaterials,
+) -> Result<SlingshotParts, SpaceBuildError> {
+    add_slingshot_parts(scene, frame, yaw_radians, scale, materials, false)
+}
+
+/// A point of the slingshot model (the `BLUE_MOON_SLINGSHOT_*` points) in the
+/// local coordinates of its radial frame, with the trunk planted at the frame
+/// origin.
+fn slingshot_local_point(point: Vec3, yaw_radians: f32, scale: f32) -> Vec3 {
+    turned_about_radial_axis(
+        (point - Vec3::new(0.0, BLUE_MOON_SLINGSHOT_TRUNK_BASE_Y, 0.0)) * scale,
+        yaw_radians,
+    )
+}
+
+fn add_slingshot_parts(
+    scene: &mut Scene,
+    frame: RadialFrame,
+    yaw_radians: f32,
+    scale: f32,
+    materials: SpaceMaterials,
+    elastic: bool,
+) -> Result<SlingshotParts, SpaceBuildError> {
     let fork = BLUE_MOON_SLINGSHOT_FORK;
     // The trunk is planted at the frame origin, directly in the ground.
-    let lowered = BLUE_MOON_SLINGSHOT_TRUNK_BASE_Y;
-    let turn = |point: Vec3| {
-        turned_about_radial_axis((point - Vec3::new(0.0, lowered, 0.0)) * scale, yaw_radians)
-    };
+    let turn = |point: Vec3| slingshot_local_point(point, yaw_radians, scale);
     let mut parts = SlingshotParts::default();
 
     add_radial_segment(
@@ -1666,6 +1718,10 @@ fn add_slingshot(
         )?;
         parts.bands += 1;
 
+        if !elastic {
+            continue;
+        }
+
         // Elastic band from the wrap to the side of the pouch.
         add_radial_segment(
             scene,
@@ -1681,15 +1737,23 @@ fn add_slingshot(
         parts.bands += 1;
     }
 
-    add_radial_segment(
-        scene,
-        frame,
-        turn(BLUE_MOON_SLINGSHOT_POUCH - Vec3::new(BLUE_MOON_SLINGSHOT_POUCH_HALF_WIDTH, 0.0, 0.0)),
-        turn(BLUE_MOON_SLINGSHOT_POUCH + Vec3::new(BLUE_MOON_SLINGSHOT_POUCH_HALF_WIDTH, 0.0, 0.0)),
-        BLUE_MOON_SLINGSHOT_POUCH_RADIUS * scale,
-        materials.slingshot_band,
-    )?;
-    parts.bands += 1;
+    if elastic {
+        add_radial_segment(
+            scene,
+            frame,
+            turn(
+                BLUE_MOON_SLINGSHOT_POUCH
+                    - Vec3::new(BLUE_MOON_SLINGSHOT_POUCH_HALF_WIDTH, 0.0, 0.0),
+            ),
+            turn(
+                BLUE_MOON_SLINGSHOT_POUCH
+                    + Vec3::new(BLUE_MOON_SLINGSHOT_POUCH_HALF_WIDTH, 0.0, 0.0),
+            ),
+            BLUE_MOON_SLINGSHOT_POUCH_RADIUS * scale,
+            materials.slingshot_band,
+        )?;
+        parts.bands += 1;
+    }
 
     Ok(parts)
 }
@@ -2390,6 +2454,33 @@ struct Songbird {
     palette: usize,
     flying: bool,
     crest: bool,
+    legs: bool,
+}
+
+/// Materials of one songbird.
+#[derive(Debug, Clone, Copy)]
+struct SongbirdMaterials {
+    body: usize,
+    belly: usize,
+    feather: usize,
+    beak: usize,
+    feet: usize,
+    eye: usize,
+    pupil: usize,
+}
+
+impl CookieWorldMaterials {
+    fn songbird(self, palette: usize, materials: SpaceMaterials) -> SongbirdMaterials {
+        SongbirdMaterials {
+            body: self.bird_body[palette],
+            belly: self.bird_belly[palette],
+            feather: self.bird_feather[palette],
+            beak: self.bird_beak,
+            feet: self.bird_feet,
+            eye: materials.eye,
+            pupil: materials.pupil,
+        }
+    }
 }
 
 fn cookie_world_birds() -> [Songbird; COOKIE_WORLD_BIRD_COUNT] {
@@ -2408,6 +2499,7 @@ fn cookie_world_birds() -> [Songbird; COOKIE_WORLD_BIRD_COUNT] {
             palette: 0,
             flying: false,
             crest: true,
+            legs: true,
         },
         // Flies from the slingshot towards the pig with open wings, turned a
         // little towards the camera so both wings show.
@@ -2419,6 +2511,7 @@ fn cookie_world_birds() -> [Songbird; COOKIE_WORLD_BIRD_COUNT] {
             palette: 1,
             flying: true,
             crest: false,
+            legs: false,
         },
     ]
 }
@@ -2432,7 +2525,7 @@ fn add_cookie_world_birds(
     let first_part = scene.object_count();
 
     for bird in cookie_world_birds() {
-        add_songbird(scene, bird, materials, world)?;
+        add_songbird(scene, bird, world.songbird(bird.palette, materials))?;
         metadata.cookie_world_bird_count += 1;
     }
     metadata.cookie_world_bird_parts = scene.object_count() - first_part;
@@ -2445,22 +2538,21 @@ fn add_cookie_world_birds(
 fn add_songbird(
     scene: &mut Scene,
     bird: Songbird,
-    materials: SpaceMaterials,
-    world: CookieWorldMaterials,
+    colors: SongbirdMaterials,
 ) -> Result<(), SpaceBuildError> {
     let up = bird.up.normalized();
     let forward = (bird.forward - up * bird.forward.dot(up)).normalized();
     let left = up.cross(forward);
     let basis = Basis3::new(left, up, forward)?;
     let at = |local: Vec3| bird.center + basis.local_to_world_vector(local * bird.radius);
-    let body = world.bird_body[bird.palette];
-    let feather = world.bird_feather[bird.palette];
+    let body = colors.body;
+    let feather = colors.feather;
 
     scene.add_sphere(Sphere::new(bird.center, bird.radius, body)?)?;
     scene.add_sphere(Sphere::new(
         at(Vec3::new(0.0, -0.24, 0.38)),
         bird.radius * 0.66,
-        world.bird_belly[bird.palette],
+        colors.belly,
     )?)?;
 
     for side in [-1.0, 1.0] {
@@ -2468,12 +2560,12 @@ fn add_songbird(
         let eye = eye_direction * 0.76;
         let pupil = eye + (eye_direction + Vec3::new(0.0, 0.0, 0.3)).normalized() * 0.18;
 
-        scene.add_sphere(Sphere::new(at(eye), bird.radius * 0.28, materials.eye)?)?;
-        scene.add_sphere(Sphere::new(at(pupil), bird.radius * 0.13, materials.pupil)?)?;
+        scene.add_sphere(Sphere::new(at(eye), bird.radius * 0.28, colors.eye)?)?;
+        scene.add_sphere(Sphere::new(at(pupil), bird.radius * 0.13, colors.pupil)?)?;
         scene.add_sphere(Sphere::new(
             at(pupil + Vec3::new(side * 0.04, 0.07, 0.09)),
             bird.radius * 0.04,
-            materials.eye,
+            colors.eye,
         )?)?;
     }
 
@@ -2482,14 +2574,14 @@ fn add_songbird(
         at(Vec3::new(0.0, 0.02, 0.86)),
         at(Vec3::new(0.0, -0.08, 1.55)),
         bird.radius * 0.24,
-        world.bird_beak,
+        colors.beak,
     )?;
     add_feather(
         scene,
         at(Vec3::new(0.0, -0.16, 0.82)),
         at(Vec3::new(0.0, -0.28, 1.28)),
         bird.radius * 0.16,
-        world.bird_beak,
+        colors.beak,
     )?;
 
     let wing = if bird.flying {
@@ -2533,7 +2625,7 @@ fn add_songbird(
         }
     }
 
-    if !bird.flying {
+    if bird.legs {
         for side in [-1.0, 1.0] {
             let hip = Vec3::new(side * 0.26, -0.80, 0.08);
             let ankle = Vec3::new(side * 0.28, -1.10, 0.10);
@@ -2544,14 +2636,14 @@ fn add_songbird(
                 bird.radius * 0.05,
                 (end - start).length() * 0.5,
                 basis_with_up(end - start)?,
-                world.bird_feet,
+                colors.feet,
             )?)?;
             add_feather(
                 scene,
                 at(ankle + Vec3::new(0.0, -0.02, -0.06)),
                 at(ankle + Vec3::new(0.0, -0.04, 0.34)),
                 bird.radius * 0.07,
-                world.bird_feet,
+                colors.feet,
             )?;
         }
     }
@@ -2932,6 +3024,23 @@ fn add_level_three_slingshot_asteroid(
         materials,
     )?;
     metadata.level_three_slingshot_parts = parts.total();
+
+    // Three birds: one loaded in the pouch, aimed at the bridge, and two
+    // waiting on the left of the asteroid.
+    let bird_materials = birds::register_bird_materials(scene, materials)?;
+    metadata.level_three_bird_parts = birds::add_slingshot_birds(
+        scene,
+        birds::SlingshotBirds {
+            frame,
+            yaw_radians: COOKIE_WORLD_SLINGSHOT_YAW_RADIANS,
+            scale: LEVEL_THREE_SLINGSHOT_SCALE,
+            aim: LEVEL_THREE_BIRD_AIM,
+            ground: &body,
+            waiting_directions: &LEVEL_THREE_WAITING_BIRDS,
+        },
+        bird_materials,
+    )?;
+    metadata.level_three_bird_count = birds::BIRD_COUNT;
 
     Ok(())
 }
@@ -5105,6 +5214,7 @@ mod tests {
                 + metadata.level_three_pig_count * 8
                 + slingshot_asteroid.total()
                 + metadata.level_three_slingshot_parts
+                + metadata.level_three_bird_parts
         );
         assert!(scene.skybox().is_some());
         assert!(scene.lights().len() >= 3);
@@ -5149,8 +5259,11 @@ mod tests {
         let slingshot_asteroid = metadata.level_three_slingshot_asteroid.unwrap();
         let asteroid_parts =
             slingshot_asteroid.first_id..slingshot_asteroid.first_id + slingshot_asteroid.total();
-        let slingshot_parts =
-            asteroid_parts.end..asteroid_parts.end + metadata.level_three_slingshot_parts;
+        // The slingshot and its birds float outside both atmospheres.
+        let slingshot_parts = asteroid_parts.end
+            ..asteroid_parts.end
+                + metadata.level_three_slingshot_parts
+                + metadata.level_three_bird_parts;
         let rock_parts = slingshot_asteroid.first_id - metadata.level_three_rock_parts
             ..slingshot_asteroid.first_id;
         let inside = |atmosphere: &Sphere, (center, radius): (Vec3, f32)| {
@@ -5339,6 +5452,32 @@ mod tests {
         // top.
         assert!(height(trunk.center()) - trunk.half_height() < ground);
         assert!(height(trunk.center()) + trunk.half_height() > ground);
+    }
+
+    #[test]
+    fn level_three_has_three_birds_at_the_slingshot() {
+        let (scene, metadata) = build_level_three_scene_with_metadata().unwrap();
+        let asteroid = metadata.level_three_slingshot_asteroid.unwrap();
+        let first_bird =
+            asteroid.first_id + asteroid.total() + metadata.level_three_slingshot_parts;
+        let birds = &scene.objects()[first_bird..first_bird + metadata.level_three_bird_parts];
+        // Each bird starts with its round body.
+        let bodies: Vec<_> = birds
+            .iter()
+            .filter_map(Primitive::as_sphere)
+            .filter(|sphere| sphere.radius() > 0.12)
+            .collect();
+
+        assert_eq!(metadata.level_three_bird_count, 3);
+        assert_eq!(bodies.len(), 3);
+        // The loaded bird sits over the slingshot, the others next to the
+        // asteroid, all of them close to it.
+        assert!(bodies[0].center().y > LEVEL_THREE_SLINGSHOT_ASTEROID_CENTER.y + 0.5);
+        for body in &bodies {
+            let distance = (body.center() - LEVEL_THREE_SLINGSHOT_ASTEROID_CENTER).length();
+            assert!(distance > LEVEL_THREE_SLINGSHOT_ASTEROID_RADIUS);
+            assert!(distance < LEVEL_THREE_SLINGSHOT_ASTEROID_RADIUS + 1.2);
+        }
     }
 
     #[test]

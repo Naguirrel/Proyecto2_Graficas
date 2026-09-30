@@ -4,11 +4,12 @@ use std::time::{Duration, Instant};
 use crate::{
     camera::{Camera, CameraInput, OrbitCamera},
     framebuffer::Framebuffer,
+    game::{Game, Outcome},
     math::Vec3,
     ray::Ray,
     renderer,
     scene::Scene,
-    space::{self, PlanetType, SceneState, SelectorWorld},
+    space::{self, LevelOneGame, PlanetType, SceneState, SelectorWorld},
 };
 
 const WIDTH: usize = 800;
@@ -26,6 +27,8 @@ const MENU_TITLE_FONT_SIZE: i32 = 94;
 const MENU_SUBTITLE_FONT_SIZE: i32 = 104;
 const STATUS_FONT_SIZE: i32 = 20;
 const CONTROLS_FONT_SIZE: i32 = 20;
+const SCORE_FONT_SIZE: i32 = 44;
+const TRAJECTORY_DOT_RADIUS: f32 = 3.5;
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (mut rl, thread) = raylib::init()
@@ -46,6 +49,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut scene_state = SceneState::Galaxy;
     let mut orbit_camera = space::galaxy_selector_orbit_camera(aspect_ratio);
     let mut scene = space::build_galaxy_selector_scene()?;
+    // Level one is playable: its game lives here while the level is open.
+    let mut level_one: Option<LevelOneGame> = None;
 
     let render_image =
         Image::gen_image_color(render_width as i32, render_height as i32, Color::BLACK);
@@ -73,9 +78,40 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &mut camera,
                 &mut render_state,
             )?;
+            level_one = None;
         }
 
-        let mouse_orbit_delta = mouse_orbit_delta(&rl, scene_state);
+        let viewport = render_viewport(
+            rl.get_screen_width(),
+            rl.get_screen_height(),
+            framebuffer.width(),
+            framebuffer.height(),
+        );
+        if let Some(level) = level_one.as_mut() {
+            update_level_one(
+                &rl,
+                level,
+                &camera,
+                viewport,
+                (framebuffer.width(), framebuffer.height()),
+                delta_seconds,
+            );
+            if level.sync_scene(&mut scene)? {
+                render_state.mark_scene_changed_interactive(now);
+            } else if level.game().is_aiming() {
+                // Keep the quick preview while the player aims.
+                render_state.mark_interaction(now);
+            }
+        }
+        let aiming = level_one
+            .as_ref()
+            .is_some_and(|level| level.game().is_aiming());
+
+        let mouse_orbit_delta = if aiming {
+            (0.0, 0.0)
+        } else {
+            mouse_orbit_delta(&rl, scene_state)
+        };
         if orbit_camera.update(read_camera_input(&rl, mouse_orbit_delta), delta_seconds) {
             camera = orbit_camera.to_camera();
             render_state.mark_camera_changed(now);
@@ -112,7 +148,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 framebuffer.height(),
             )
         {
-            select_planet(
+            level_one = select_planet(
                 planet,
                 aspect_ratio,
                 &mut scene_state,
@@ -181,6 +217,15 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 controls_width,
             },
         );
+        if let Some(level) = &level_one {
+            draw_game_hud(
+                &mut drawing,
+                level.game(),
+                &camera,
+                viewport,
+                (framebuffer.width(), framebuffer.height()),
+            );
+        }
     }
 
     Ok(())
@@ -255,7 +300,9 @@ fn print_controls() {
     println!("  W/S: inclinación");
     println!("  A/D: rotación");
     println!("  Q/E: zoom");
-    println!("  R: reiniciar");
+    println!("  R: reiniciar camara");
+    println!("  Nivel 1: arrastra el pajaro de la resortera y suelta para lanzar");
+    println!("  Enter: reiniciar el nivel 1");
 }
 
 fn print_rayon_threads() {
@@ -306,6 +353,14 @@ impl InteractiveRenderState {
         self.scene_dirty = true;
         self.last_interaction = None;
         self.interactive_mode = false;
+        self.full_quality_pending = true;
+    }
+
+    /// The player is interacting without changing the picture yet: keep the
+    /// quick preview and postpone the full quality render.
+    fn mark_interaction(&mut self, now: Instant) {
+        self.last_interaction = Some(now);
+        self.interactive_mode = true;
         self.full_quality_pending = true;
     }
 
@@ -439,18 +494,28 @@ fn print_render_timing(
     }
 }
 
+#[cfg(test)]
 fn build_planet_scene(planet: PlanetType) -> Result<Scene, space::SpaceBuildError> {
+    build_planet_level(planet).map(|(scene, _)| scene)
+}
+
+/// Scene of a level, and its game when the level is playable. Level one is
+/// the playable gravity level; the old Luna Azul diorama stays in
+/// `space::build_blue_moon_scene` but is no longer shown.
+fn build_planet_level(
+    planet: PlanetType,
+) -> Result<(Scene, Option<LevelOneGame>), space::SpaceBuildError> {
     match planet {
-        PlanetType::BlueMoon => space::build_blue_moon_scene(),
-        PlanetType::CookieWorld => space::build_cookie_world_scene(),
-        PlanetType::AsteroidBelt => space::build_level_three_scene(),
-        PlanetType::CosmicCrystals => space::build_level_four_scene(),
+        PlanetType::BlueMoon => space::build_level_one().map(|(scene, level)| (scene, Some(level))),
+        PlanetType::CookieWorld => Ok((space::build_cookie_world_scene()?, None)),
+        PlanetType::AsteroidBelt => Ok((space::build_level_three_scene()?, None)),
+        PlanetType::CosmicCrystals => Ok((space::build_level_four_scene()?, None)),
     }
 }
 
 fn planet_orbit_camera(planet: PlanetType, aspect_ratio: f32) -> OrbitCamera {
     match planet {
-        PlanetType::BlueMoon => space::blue_moon_orbit_camera(aspect_ratio),
+        PlanetType::BlueMoon => space::level_one_orbit_camera(aspect_ratio),
         PlanetType::CookieWorld => space::cookie_world_orbit_camera(aspect_ratio),
         PlanetType::AsteroidBelt => space::level_three_orbit_camera(aspect_ratio),
         PlanetType::CosmicCrystals => space::level_four_orbit_camera(aspect_ratio),
@@ -529,15 +594,91 @@ fn select_planet(
     orbit_camera: &mut OrbitCamera,
     camera: &mut Camera,
     render_state: &mut InteractiveRenderState,
-) -> Result<(), space::SpaceBuildError> {
+) -> Result<Option<LevelOneGame>, space::SpaceBuildError> {
+    let (planet_scene, level) = build_planet_level(planet)?;
     *scene_state = SceneState::Planet(planet);
-    *scene = build_planet_scene(planet)?;
+    *scene = planet_scene;
     *orbit_camera = planet_orbit_camera(planet, aspect_ratio);
     *camera = orbit_camera.to_camera();
     render_state.mark_scene_changed_interactive(Instant::now());
     println!("Mundo seleccionado: {}", planet_label(planet));
 
-    Ok(())
+    Ok(level)
+}
+
+/// Mouse and keyboard of the playable level: drag the loaded bird to aim,
+/// release to launch and Enter to start over. Then the game advances.
+fn update_level_one(
+    rl: &RaylibHandle,
+    level: &mut LevelOneGame,
+    camera: &Camera,
+    viewport: Viewport,
+    framebuffer_size: (usize, usize),
+    delta_seconds: f32,
+) {
+    if rl.is_key_pressed(KeyboardKey::KEY_ENTER) || rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER) {
+        level.game_mut().restart();
+    }
+
+    let mouse_point = || {
+        mouse_to_level_plane(
+            rl.get_mouse_position(),
+            camera,
+            viewport,
+            framebuffer_size.0,
+            framebuffer_size.1,
+        )
+    };
+
+    if rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT)
+        && let Some(point) = mouse_point()
+    {
+        level.game_mut().try_grab(point);
+    }
+
+    if level.game().is_aiming() {
+        if rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+            if let Some(point) = mouse_point() {
+                level.game_mut().aim_at(point);
+            }
+        } else {
+            level.game_mut().release();
+        }
+    }
+
+    level.game_mut().update(delta_seconds);
+}
+
+/// Point of the level plane (Z = 0) under the mouse.
+fn mouse_to_level_plane(
+    mouse_position: Vector2,
+    camera: &Camera,
+    viewport: Viewport,
+    framebuffer_width: usize,
+    framebuffer_height: usize,
+) -> Option<Vec3> {
+    let (pixel_x, pixel_y) = mouse_position_to_framebuffer_pixel(
+        mouse_position.x,
+        mouse_position.y,
+        viewport,
+        framebuffer_width,
+        framebuffer_height,
+    )?;
+    let ray = camera.ray_for_pixel(pixel_x, pixel_y, framebuffer_width, framebuffer_height);
+
+    ray_level_plane_point(&ray)
+}
+
+fn ray_level_plane_point(ray: &Ray) -> Option<Vec3> {
+    if !is_finite_vec3(ray.origin) || !is_finite_vec3(ray.direction) {
+        return None;
+    }
+    if ray.direction.z.abs() < 1.0e-4 {
+        return None;
+    }
+
+    let distance = -ray.origin.z / ray.direction.z;
+    (distance.is_finite() && distance > 0.0).then(|| ray.origin + ray.direction * distance)
 }
 
 fn return_to_selector(
@@ -1156,6 +1297,155 @@ fn controls_lines() -> [&'static str; 5] {
     ]
 }
 
+/// Score, birds left, the aiming dots and the end of level banner.
+fn draw_game_hud(
+    drawing: &mut RaylibDrawHandle<'_>,
+    game: &Game,
+    camera: &Camera,
+    viewport: Viewport,
+    framebuffer_size: (usize, usize),
+) {
+    let scale = menu_scale(drawing.get_screen_height());
+    let screen_width = drawing.get_screen_width();
+    let screen_height = drawing.get_screen_height();
+
+    for point in game.trajectory_preview() {
+        if let Some((x, y)) = project_world_to_screen(*camera, point, viewport, framebuffer_size) {
+            drawing.draw_circle(x, y, TRAJECTORY_DOT_RADIUS * scale + 1.0, Color::WHITE);
+            drawing.draw_circle(
+                x,
+                y,
+                TRAJECTORY_DOT_RADIUS * scale,
+                Color::new(226, 38, 38, 255),
+            );
+        }
+    }
+
+    let label_size = (22.0 * scale).round() as i32;
+    let score_size = (SCORE_FONT_SIZE as f32 * scale).round() as i32;
+    let right = screen_width - (28.0 * scale).round() as i32;
+    let top = (18.0 * scale).round() as i32;
+    let birds = format!("PAJAROS: {}", game.birds_left());
+    for (text, y, size, color) in [
+        (
+            "PUNTOS".to_string(),
+            top,
+            label_size,
+            Color::new(235, 242, 255, 240),
+        ),
+        (
+            game.score().to_string(),
+            top + label_size + 4,
+            score_size,
+            Color::new(255, 255, 248, 255),
+        ),
+        (
+            birds,
+            top + label_size + score_size + 14,
+            label_size,
+            Color::new(255, 226, 120, 245),
+        ),
+    ] {
+        let x = right - drawing.measure_text(&text, size);
+        draw_outlined_text(drawing, &text, x, y, size, color);
+    }
+
+    let hint_size = (20.0 * scale).round() as i32;
+    let hint_y = screen_height - (48.0 * scale).round() as i32;
+    match game.outcome() {
+        Outcome::Playing => {
+            let hint = if game.is_aiming() {
+                "Suelta para lanzar"
+            } else if game.loaded_bird().is_some() {
+                "Arrastra el pajaro de la resortera para apuntar  /  Enter: reiniciar"
+            } else {
+                "Las atmosferas atraen al pajaro hacia su asteroide"
+            };
+            let x = screen_width / 2 - drawing.measure_text(hint, hint_size) / 2;
+            draw_outlined_text(
+                drawing,
+                hint,
+                x,
+                hint_y,
+                hint_size,
+                Color::new(230, 242, 255, 240),
+            );
+        }
+        Outcome::Won | Outcome::Lost => {
+            let (title, color) = if game.outcome() == Outcome::Won {
+                ("NIVEL COMPLETADO", Color::new(164, 231, 35, 255))
+            } else {
+                ("NIVEL FALLIDO", Color::new(255, 120, 90, 255))
+            };
+            let detail = format!("Puntos: {}   /   Enter: jugar de nuevo", game.score());
+            let title_size = (72.0 * scale).round() as i32;
+            let detail_size = (26.0 * scale).round() as i32;
+            let title_width = drawing.measure_text(title, title_size);
+            let detail_width = drawing.measure_text(&detail, detail_size);
+            let margin = (40.0 * scale).round() as i32;
+            let panel_width = title_width.max(detail_width) + margin * 2;
+            let title_y = screen_height / 2 - title_size;
+            let detail_y = title_y + title_size + (24.0 * scale).round() as i32;
+            let panel_top = title_y - margin / 2;
+            let panel_height = detail_y + detail_size + margin / 2 - panel_top;
+            drawing.draw_rectangle(
+                screen_width / 2 - panel_width / 2,
+                panel_top,
+                panel_width,
+                panel_height,
+                Color::new(0, 0, 0, 160),
+            );
+            draw_outlined_text(
+                drawing,
+                title,
+                screen_width / 2 - title_width / 2,
+                title_y,
+                title_size,
+                color,
+            );
+            draw_outlined_text(
+                drawing,
+                &detail,
+                screen_width / 2 - detail_width / 2,
+                detail_y,
+                detail_size,
+                Color::new(240, 246, 255, 255),
+            );
+        }
+    }
+}
+
+/// Text with a dark outline so it reads over the bright moon and the clouds.
+fn draw_outlined_text(
+    drawing: &mut RaylibDrawHandle<'_>,
+    text: &str,
+    x: i32,
+    y: i32,
+    font_size: i32,
+    color: Color,
+) {
+    let outline = (font_size / 14).max(1);
+    for (dx, dy) in [(-outline, 0), (outline, 0), (0, -outline), (0, outline)] {
+        drawing.draw_text(text, x + dx, y + dy, font_size, Color::new(0, 0, 0, 220));
+    }
+    drawing.draw_text(text, x, y, font_size, color);
+}
+
+fn project_world_to_screen(
+    camera: Camera,
+    point: Vec3,
+    viewport: Viewport,
+    framebuffer_size: (usize, usize),
+) -> Option<(i32, i32)> {
+    let (width, height) = framebuffer_size;
+    let (x, y) = project_world_to_pixel(camera, point, width, height)?;
+
+    Some((
+        (viewport.x + (x as f32 + 0.5) / width as f32 * viewport.width).round() as i32,
+        (viewport.y + (y as f32 + 0.5) / height as f32 * viewport.height).round() as i32,
+    ))
+}
+
 fn project_world_to_pixel(
     camera: Camera,
     point: Vec3,
@@ -1200,12 +1490,13 @@ fn project_world_to_pixel(
 mod tests {
     use super::{
         FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, LEVEL_NAME_FONT_SIZE,
-        RenderQuality, Viewport, approximate_text_width, build_planet_scene, controls_lines,
-        interactive_dimensions, level_ui_metadata, mouse_position_to_framebuffer_pixel,
-        mouse_to_framebuffer_pixel, orbit_drag_button, performance_scene_label,
-        pick_selector_world, planet_orbit_camera, project_world_to_pixel, render_dimensions_for,
-        render_viewport, return_to_selector, scene_state_label, selector_level_ui_metadata,
-        selector_planet_under_mouse, write_framebuffer_rgba,
+        RenderQuality, Viewport, approximate_text_width, build_planet_level, build_planet_scene,
+        controls_lines, interactive_dimensions, level_ui_metadata,
+        mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel, mouse_to_level_plane,
+        orbit_drag_button, performance_scene_label, pick_selector_world, planet_orbit_camera,
+        project_world_to_pixel, project_world_to_screen, ray_level_plane_point,
+        render_dimensions_for, render_viewport, return_to_selector, scene_state_label,
+        selector_level_ui_metadata, selector_planet_under_mouse, write_framebuffer_rgba,
     };
     use crate::{
         camera::{Camera, CameraInput, OrbitCamera},
@@ -1992,5 +2283,85 @@ mod tests {
 
         assert_ne!(before.position, after.position);
         assert_near(ray.direction.dot(expected), 1.0);
+    }
+
+    #[test]
+    fn first_planet_opens_the_playable_level() {
+        let (scene, level) = build_planet_level(PlanetType::BlueMoon).unwrap();
+        let level = level.expect("level one has a game");
+
+        assert!(scene.skybox().is_some());
+        assert!(!scene.dynamic_objects().is_empty());
+        assert_eq!(level.game().birds_left(), 3);
+        assert!(level.game().pig().alive);
+        assert_eq!(
+            planet_orbit_camera(PlanetType::BlueMoon, 16.0 / 9.0),
+            space::level_one_orbit_camera(16.0 / 9.0)
+        );
+        for planet in [
+            PlanetType::CookieWorld,
+            PlanetType::AsteroidBelt,
+            PlanetType::CosmicCrystals,
+        ] {
+            assert!(build_planet_level(planet).unwrap().1.is_none());
+        }
+    }
+
+    #[test]
+    fn rays_meet_the_level_plane_in_front_of_the_camera() {
+        let ray = Ray::new(Vec3::new(1.0, 2.0, 5.0), Vec3::new(0.0, 0.0, -1.0));
+        let point = ray_level_plane_point(&ray).unwrap();
+
+        assert!(point.approx_eq(Vec3::new(1.0, 2.0, 0.0)));
+        assert!(
+            ray_level_plane_point(&Ray::new(
+                Vec3::new(0.0, 0.0, 5.0),
+                Vec3::new(1.0, 0.0, 0.0)
+            ))
+            .is_none()
+        );
+        assert!(
+            ray_level_plane_point(&Ray::new(
+                Vec3::new(0.0, 0.0, 5.0),
+                Vec3::new(0.0, 0.0, 1.0)
+            ))
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn clicking_the_drawn_bird_grabs_it() {
+        let (width, height) = (1920, 1080);
+        let (_, level) = build_planet_level(PlanetType::BlueMoon).unwrap();
+        let mut level = level.unwrap();
+        let camera = space::level_one_orbit_camera(width as f32 / height as f32).to_camera();
+        let viewport = render_viewport(width as i32, height as i32, width, height);
+        let bird = level.game().loaded_bird().unwrap().position;
+        let (x, y) = project_world_to_screen(camera, bird, viewport, (width, height)).unwrap();
+        let point = mouse_to_level_plane(
+            Vector2::new(x as f32, y as f32),
+            &camera,
+            viewport,
+            width,
+            height,
+        )
+        .unwrap();
+
+        assert!((point - bird).length() < 0.1);
+        assert!(level.game_mut().try_grab(point));
+    }
+
+    #[test]
+    fn aiming_keeps_the_quick_preview_until_the_delay_passes() {
+        let start = Instant::now();
+        let mut state = InteractiveRenderState::new();
+        state.render_completed(RenderQuality::Full);
+
+        state.mark_interaction(start);
+        assert_eq!(state.next_render(start, FULL_QUALITY_DELAY), None);
+        assert_eq!(
+            state.next_render(start + FULL_QUALITY_DELAY, FULL_QUALITY_DELAY),
+            Some(RenderQuality::Full)
+        );
     }
 }

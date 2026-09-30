@@ -14,7 +14,13 @@ pub enum SceneError {
 #[derive(Debug)]
 pub struct Scene {
     objects: Vec<Primitive>,
+    /// BVH over the static objects (every object while no dynamic range
+    /// exists).
     bvh: Option<Bvh>,
+    /// Objects from this index on are dynamic: a game can replace them
+    /// between frames without rebuilding the static BVH.
+    dynamic_start: Option<usize>,
+    dynamic_bvh: Option<Bvh>,
     materials: Vec<Material>,
     textures: Vec<Texture>,
     lights: Vec<PointLight>,
@@ -84,13 +90,55 @@ impl Scene {
         }
 
         self.objects.push(primitive);
-        self.bvh = None;
+        if self.dynamic_start.is_some() {
+            self.dynamic_bvh = None;
+        } else {
+            self.bvh = None;
+        }
         Ok(())
     }
 
     /// Builds the static acceleration structure after scene construction.
+    /// With dynamic objects, the static and dynamic ranges get one BVH each.
     pub fn build_bvh(&mut self) {
+        let (static_objects, dynamic_objects) = self.objects.split_at(self.static_object_count());
+        self.bvh = Some(Bvh::build(static_objects));
+        if self.dynamic_start.is_some() {
+            self.dynamic_bvh = Some(Bvh::build(dynamic_objects));
+        }
+    }
+
+    /// Builds the static BVH and makes every object added from now on
+    /// dynamic. Dynamic objects are cleared and added again when they move,
+    /// and only their small BVH is rebuilt.
+    pub fn freeze_static_objects(&mut self) {
+        self.dynamic_start = None;
+        self.dynamic_bvh = None;
         self.bvh = Some(Bvh::build(&self.objects));
+        self.dynamic_start = Some(self.objects.len());
+    }
+
+    /// Removes the dynamic objects, keeping the static ones and their BVH.
+    pub fn clear_dynamic_objects(&mut self) {
+        if let Some(start) = self.dynamic_start {
+            self.objects.truncate(start);
+            self.dynamic_bvh = None;
+        }
+    }
+
+    /// Builds the BVH of the dynamic objects after they were added again.
+    pub fn build_dynamic_bvh(&mut self) {
+        if self.dynamic_start.is_some() {
+            self.dynamic_bvh = Some(Bvh::build(self.dynamic_objects()));
+        }
+    }
+
+    pub fn static_object_count(&self) -> usize {
+        self.dynamic_start.unwrap_or(self.objects.len())
+    }
+
+    pub fn dynamic_objects(&self) -> &[Primitive] {
+        &self.objects[self.static_object_count()..]
     }
 
     pub fn add_light(&mut self, light: PointLight) {
@@ -217,30 +265,74 @@ impl Scene {
     }
 
     pub fn intersect(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<Intersection> {
-        if let Some(bvh) = &self.bvh {
-            return bvh.intersect(&self.objects, ray, t_min, t_max);
-        }
-        let mut closest = t_max;
-        let mut closest_hit = None;
+        let (static_objects, dynamic_objects) = self.objects.split_at(self.static_object_count());
+        let static_hit = intersect_objects(static_objects, self.bvh.as_ref(), ray, t_min, t_max);
 
-        for primitive in &self.objects {
-            if let Some(hit) = primitive.intersect(ray, t_min, closest) {
-                closest = hit.distance;
-                closest_hit = Some(hit);
-            }
+        if dynamic_objects.is_empty() {
+            return static_hit;
         }
 
-        closest_hit
+        let closest = static_hit.map_or(t_max, |hit| hit.distance);
+        intersect_objects(
+            dynamic_objects,
+            self.dynamic_bvh.as_ref(),
+            ray,
+            t_min,
+            closest,
+        )
+        .or(static_hit)
     }
 
     pub fn intersects_any(&self, ray: &Ray, t_min: f32, t_max: f32) -> bool {
-        if let Some(bvh) = &self.bvh {
-            return bvh.intersects_any(&self.objects, ray, t_min, t_max);
-        }
-        self.objects
-            .iter()
-            .any(|primitive| primitive.intersect(ray, t_min, t_max).is_some())
+        let (static_objects, dynamic_objects) = self.objects.split_at(self.static_object_count());
+
+        intersects_any_object(static_objects, self.bvh.as_ref(), ray, t_min, t_max)
+            || intersects_any_object(
+                dynamic_objects,
+                self.dynamic_bvh.as_ref(),
+                ray,
+                t_min,
+                t_max,
+            )
     }
+}
+
+fn intersect_objects(
+    objects: &[Primitive],
+    bvh: Option<&Bvh>,
+    ray: &Ray,
+    t_min: f32,
+    t_max: f32,
+) -> Option<Intersection> {
+    if let Some(bvh) = bvh {
+        return bvh.intersect(objects, ray, t_min, t_max);
+    }
+    let mut closest = t_max;
+    let mut closest_hit = None;
+
+    for primitive in objects {
+        if let Some(hit) = primitive.intersect(ray, t_min, closest) {
+            closest = hit.distance;
+            closest_hit = Some(hit);
+        }
+    }
+
+    closest_hit
+}
+
+fn intersects_any_object(
+    objects: &[Primitive],
+    bvh: Option<&Bvh>,
+    ray: &Ray,
+    t_min: f32,
+    t_max: f32,
+) -> bool {
+    if let Some(bvh) = bvh {
+        return bvh.intersects_any(objects, ray, t_min, t_max);
+    }
+    objects
+        .iter()
+        .any(|primitive| primitive.intersect(ray, t_min, t_max).is_some())
 }
 
 impl Default for Scene {
@@ -248,6 +340,8 @@ impl Default for Scene {
         Self {
             objects: Vec::new(),
             bvh: None,
+            dynamic_start: None,
+            dynamic_bvh: None,
             materials: Vec::new(),
             textures: Vec::new(),
             lights: Vec::new(),
@@ -1204,5 +1298,72 @@ mod tests {
         assert_eq!(scene.cylinder_count(), 1);
         assert_eq!(scene.cone_count(), 1);
         assert_eq!(scene.object_count(), objects_before);
+    }
+
+    #[test]
+    fn dynamic_objects_are_hit_in_front_of_static_objects() {
+        let mut scene = diffuse_scene();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -4.0), 1.0, 0).unwrap())
+            .unwrap();
+        scene.freeze_static_objects();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -1.0), 0.5, 0).unwrap())
+            .unwrap();
+        scene.build_dynamic_bvh();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(scene.static_object_count(), 1);
+        assert_eq!(scene.dynamic_objects().len(), 1);
+        assert!((hit.distance - 3.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn static_objects_in_front_of_dynamic_ones_still_win() {
+        let mut scene = diffuse_scene();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -1.0), 0.5, 0).unwrap())
+            .unwrap();
+        scene.freeze_static_objects();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -4.0), 1.0, 0).unwrap())
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert!((hit.distance - 3.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn clearing_dynamic_objects_keeps_static_objects() {
+        let mut scene = diffuse_scene();
+        scene.add_cube(unit_cube(0)).unwrap();
+        scene.freeze_static_objects();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(4.0, 0.0, 0.0), 1.0, 0).unwrap())
+            .unwrap();
+        scene.build_dynamic_bvh();
+        let dynamic_ray = Ray::new(Vec3::new(4.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        assert!(scene.intersects_any(&dynamic_ray, 0.001, 100.0));
+
+        scene.clear_dynamic_objects();
+
+        assert_eq!(scene.object_count(), 1);
+        assert!(scene.dynamic_objects().is_empty());
+        assert!(!scene.intersects_any(&dynamic_ray, 0.001, 100.0));
+        let static_ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        assert!(scene.intersect(&static_ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn dynamic_objects_cast_shadows_without_their_bvh() {
+        let mut scene = diffuse_scene();
+        scene.freeze_static_objects();
+        scene.add_cube(unit_cube(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert!(scene.intersects_any(&ray, 0.001, 100.0));
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
     }
 }
