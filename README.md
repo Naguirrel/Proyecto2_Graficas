@@ -2,7 +2,7 @@
 
 Raytracer CPU escrito en Rust que renderiza un diorama interactivo inspirado en *Angry Birds Space*. La aplicacion abre en pantalla completa con `raylib`, muestra un selector de mundos y permite entrar a cada planeta para explorarlo con una camara orbital.
 
-Todo el raytracing (intersecciones, iluminacion, sombras, reflexion, refraccion y skybox) esta implementado dentro del proyecto. `raylib` solo se usa para la ventana, la entrada, mostrar el framebuffer como textura y dibujar la interfaz 2D.
+Todo el raytracing (intersecciones, iluminacion, sombras, reflexion, refraccion y skybox) esta implementado dentro del proyecto. `raylib` se usa para la ventana, la entrada, mostrar el framebuffer como textura, dibujar la interfaz 2D y reproducir la musica.
 
 El proyecto empezo como un diorama de una sala de cine. Esa escena se conserva en `src/cinema.rs` y la usan las pruebas del renderer, pero la aplicacion ya no la muestra.
 
@@ -10,9 +10,10 @@ El proyecto empezo como un diorama de una sala de cine. Esa escena se conserva e
 
 | Nivel | Mundo | Contenido |
 | --- | --- | --- |
-| 1 | Luna Azul | Planeta texturizado con crateres, piedras, base de tierra y estructuras sobre la superficie |
+| 1 | Luna Azul | Nivel jugable de lanzamiento de pajaros con gravedad, trayectoria, puntaje y reinicio |
 | 2 | Mundo Galleta | Planeta galleta con chispas de chocolate, construccion de madera, hielo, metal y TNT, dos cerditos y dulces |
-| 3 | Cinturon de Asteroides | Nivel provisional: planeta con asteroides decorativos |
+| 3 | Cinturon de Asteroides | Puente de asteroides con resortera, pajaros, cerditos y bloques |
+| 4 | Cristales Cosmicos | Escenario de cristales cosmicos |
 
 Cada planeta esta rodeado por un campo de gravedad translucido que usa transparencia y refraccion.
 
@@ -27,6 +28,8 @@ Cada planeta esta rodeado por un campo de gravedad translucido que usa transpare
 - Texturas PPM `P3` con modos `Repeat` y `Clamp`, y color fallback magenta para texturas invalidas.
 - Skybox espacial generado proceduralmente (gradiente, sol, nubes, estrellas y asteroides de fondo).
 - Selector de mundos por ray picking: al pasar el mouse sobre un planeta se resalta con un halo y su nombre.
+- Musica en bucle para el selector y una pista propia para cada nivel.
+- Referencia visual de cada nivel accesible con `M`, dibujada como interfaz 2D sobre la escena.
 - Render adaptativo: resolucion reducida mientras la camara se mueve y render completo 180 ms despues de detenerse. Solo se vuelve a renderizar cuando cambia la camara o la escena.
 - Pruebas unitarias para los modulos principales.
 
@@ -70,7 +73,11 @@ La aplicacion abre en pantalla completa con el titulo `Angry Birds Space Diorama
 | `Q` / `E` | Acercar o alejar |
 | Rueda del mouse | Zoom |
 | `R` | Reiniciar la camara |
-| `Backspace` | Regresar al selector |
+| `M` (en un nivel) | Mostrar la imagen de referencia del nivel |
+| Boton `Cerrar` o `Backspace` (con la referencia abierta) | Cerrar la referencia y seguir en el nivel |
+| `Backspace` (sin referencia abierta) | Regresar al selector |
+| Arrastrar y soltar el pajaro (nivel 1) | Apuntar y lanzar |
+| `Enter` (nivel 1) | Reiniciar el nivel |
 | `Escape` | Salir |
 
 ## Resolucion de render
@@ -110,10 +117,12 @@ cargo clippy --all-targets --all-features -- -D warnings
 │   │   ├── seat_fabric.ppm
 │   │   ├── theater_carpet.ppm
 │   │   └── transparent_plastic.ppm
+│   ├── Music/                          # Tema del selector y pistas de los cuatro niveles
+│   ├── Levels_images/                  # Referencias JPEG de los cuatro niveles
 │   ├── Planets/                        # Sprites de referencia (no versionados)
 │   └── Background_Elements/            # Fondos de referencia (no versionados)
 └── src/
-    ├── app.rs           # Ventana raylib, ciclo principal, selector, controles, interfaz y render adaptativo
+    ├── app.rs           # Ventana raylib, audio, visor de referencias, controles y render adaptativo
     ├── basis.rs         # Bases ortonormales para primitivas orientadas
     ├── camera.rs        # Camara pinhole y camara orbital
     ├── cinema.rs        # Escena de la sala de cine (usada en pruebas)
@@ -135,7 +144,8 @@ cargo clippy --all-targets --all-features -- -D warnings
     ├── renderer.rs      # Raytracing, sombreado, sombras, reflexion y refraccion
     ├── scene.rs         # Contenedor de primitivas, materiales, texturas, luces y skybox
     ├── skybox.rs        # Muestreo de fondo equirectangular
-    ├── space.rs         # Selector de mundos, niveles, materiales, luces y skybox espacial
+    ├── space.rs         # Selector de mundos y escenas espaciales
+    ├── space/           # Geometria y logica de niveles, pajaros y voxeles
     ├── sphere.rs        # Esferas con UV equirectangulares
     └── texture.rs       # Carga y muestreo de texturas PPM
 ```
@@ -143,6 +153,16 @@ cargo clippy --all-targets --all-features -- -D warnings
 ## Texturas y assets
 
 Las texturas se cargan desde rutas relativas en `assets/textures/`, por lo que el proyecto debe ejecutarse desde la raiz. Si falta una textura requerida, la construccion de la escena devuelve un error.
+
+La aplicacion carga al iniciar las cinco pistas de `assets/Music/` y las cuatro imagenes de `assets/Levels_images/`. Las rutas se resuelven desde `CARGO_MANIFEST_DIR`; si falta algun archivo, el inicio devuelve un error. La musica se reproduce en bucle y cambia al entrar a un nivel o volver al selector. Mientras la referencia esta abierta, la interaccion del nivel y la camara se pausan.
+
+| Parte | Musica | Referencia |
+| --- | --- | --- |
+| Selector | `ABS_PG2_Main_Theme.mp3` | — |
+| Nivel 1: Luna Azul | `ABS_PG2_Level_1.mp3` | `level_1.jpeg` |
+| Nivel 2: Mundo Galleta | `ABS_PG2_Level_2.mp3` | `level_2.jpeg` |
+| Nivel 3: Cinturon de Asteroides | `ABS_PG2_Level_3.mp3` | `level_3.jpeg` |
+| Nivel 4: Cristales Cosmicos | `ABS_PG2_Level_4.mp3` | `level_4.jpeg` |
 
 El skybox espacial no se carga de un archivo: se genera en codigo en `src/space.rs`.
 
@@ -152,11 +172,11 @@ El skybox espacial no se carga de un archivo: se genera en codigo en `src/space.
 
 ## Notas de implementacion
 
-`src/main.rs` llama a `app::run()`, que abre la ventana y construye la escena del selector con `space::build_galaxy_selector_scene()`. Al hacer click sobre un planeta, la aplicacion construye la escena del nivel (`build_blue_moon_scene`, `build_cookie_world_scene` o `build_level_three_scene`) y su camara orbital. Con `Backspace` vuelve a construir el selector.
+`src/main.rs` llama a `app::run()`, que abre la ventana y construye la escena del selector con `space::build_galaxy_selector_scene()`. Al elegir un planeta, la aplicacion construye el nivel correspondiente y su camara orbital. El nivel 1 usa `space::build_level_one()`; `build_blue_moon_scene()` conserva un diorama anterior para las pruebas. Con `Backspace` se cierra primero la referencia, si esta abierta; una segunda pulsacion vuelve a construir el selector.
 
 El renderizado principal esta en `src/renderer.rs`. Para cada pixel genera un rayo desde la camara, busca la interseccion mas cercana y calcula el color combinando emision, ambiente, difuso, especular, sombras, reflexion, refraccion y el skybox.
 
 ## Dependencias
 
-- `raylib` 6.0: ventana, entrada, textura para mostrar el framebuffer y textos de la interfaz.
+- `raylib` 6.0: ventana, entrada, audio, textura para mostrar el framebuffer, imagenes de referencia y textos de la interfaz.
 - `rayon` 1.10: paralelizacion del render por filas del framebuffer.
