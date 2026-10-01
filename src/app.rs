@@ -1,6 +1,9 @@
 use raylib::prelude::*;
 use std::time::{Duration, Instant};
 
+mod intro;
+use intro::{IntroAction, IntroMenu};
+
 use crate::{
     camera::{Camera, CameraInput, OrbitCamera},
     framebuffer::Framebuffer,
@@ -143,8 +146,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         audio.new_music(MUSIC_PATHS[3])?,
         audio.new_music(MUSIC_PATHS[4])?,
     ];
+    let mut intro_menu = Some(IntroMenu::new());
     for track in &mut music {
         track.set_looping(true);
+        track.set_volume(intro_menu.as_ref().map_or(1.0, IntroMenu::effective_volume));
     }
     let mut active_music_index = music_index(SceneState::Galaxy);
     music[active_music_index].play_stream();
@@ -184,11 +189,37 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut render_state = InteractiveRenderState::new();
     let mut last_frame = Instant::now();
     let mut mouse_state = MouseInteractionState::default();
+    let mut suppress_selector_click_until_release = false;
 
     while !rl.window_should_close() && !rl.is_key_down(KeyboardKey::KEY_ESCAPE) {
         let now = Instant::now();
         let delta_seconds = now.duration_since(last_frame).as_secs_f32();
         last_frame = now;
+        music[active_music_index].update_stream();
+
+        if let Some(menu) = intro_menu.as_mut() {
+            let previous_volume = menu.effective_volume();
+            let action = menu.update(&rl);
+            let next_volume = menu.effective_volume();
+            if next_volume != previous_volume {
+                for track in &music {
+                    track.set_volume(next_volume);
+                }
+            }
+            match action {
+                IntroAction::Start => {
+                    intro_menu = None;
+                    suppress_selector_click_until_release = true;
+                    continue;
+                }
+                IntroAction::Exit => break,
+                IntroAction::None => {
+                    let mut drawing = rl.begin_drawing(&thread);
+                    menu.draw(&mut drawing);
+                    continue;
+                }
+            }
+        }
 
         let reference_was_open = show_reference;
         let close_button = reference_close_button(rl.get_screen_width(), rl.get_screen_height());
@@ -299,7 +330,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             {
                 chosen_planet = worlds.get(selector_focus).map(|world| world.planet);
             }
-            if !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT)
+            if suppress_selector_click_until_release {
+                if !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_LEFT) {
+                    suppress_selector_click_until_release = false;
+                }
+            } else if !rl.is_mouse_button_down(MouseButton::MOUSE_BUTTON_RIGHT)
                 && let Some(mouse_position) = mouse_state.update_left_click(&rl)
             {
                 if let Some(step) = selector_arrow_under_mouse(mouse_position, screen) {
@@ -339,7 +374,6 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             music[next_music_index].play_stream();
             active_music_index = next_music_index;
         }
-        music[active_music_index].update_stream();
 
         if let Some(quality) = render_state.next_render(now, FULL_QUALITY_DELAY) {
             let started = Instant::now();
