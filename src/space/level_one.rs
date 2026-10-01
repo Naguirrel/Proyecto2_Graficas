@@ -31,8 +31,8 @@ use crate::{
     color::Color,
     cylinder::Cylinder,
     game::{
-        BirdPose, BirdSpot, BlockKind, BlockLayout, BlockState, Game, GravityPlanet, LevelLayout,
-        PuffKind, SolidRock,
+        BirdSpot, BlockKind, BlockLayout, BlockState, Game, GravityPlanet, LevelLayout, PuffKind,
+        SolidRock,
     },
     light::PointLight,
     material::Material,
@@ -734,7 +734,6 @@ fn write_dynamic_objects(
     add_elastic(scene, game, materials, elastic)?;
 
     for view in game.bird_views() {
-        let pose = view.pose;
         // Birds look a little towards the camera so their faces show.
         let forward = (view.forward + Vec3::new(0.0, 0.0, 0.55)).normalized();
         add_songbird(
@@ -745,9 +744,6 @@ fn write_dynamic_objects(
                 forward,
                 up: view.up,
                 palette: view.index,
-                flying: pose == BirdPose::Flying,
-                crest: true,
-                legs: pose == BirdPose::Standing,
             },
             materials.birds[view.index % LEVEL_ONE_BIRD_COUNT],
         )?;

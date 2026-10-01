@@ -23,9 +23,11 @@ mod birds;
 mod blue_moon;
 mod cosmic_crystals;
 mod level_one;
+mod pigs;
 mod selector;
 mod voxel;
 
+use birds::{BirdKind, add_songbird};
 pub use cosmic_crystals::{build_level_four_scene, level_four_orbit_camera, level_four_skybox};
 pub use level_one::{
     LevelOneGame, build_level_one, build_level_one_scene, level_one_layout, level_one_orbit_camera,
@@ -233,7 +235,7 @@ const COOKIE_WORLD_BACK_ROCKS: [(Vec3, f32); 12] = [
     (Vec3::new(-4.80, 4.20, -4.20), 0.26),
     (Vec3::new(1.90, -4.30, -3.80), 0.24),
 ];
-/// Two original cartoon songbirds: one waits next to the slingshot and the
+/// Two space birds: one waits next to the slingshot and the
 /// other flies towards the pig.
 pub const COOKIE_WORLD_BIRD_COUNT: usize = 2;
 const COOKIE_WORLD_BIRD_RADIUS: f32 = 0.24;
@@ -242,47 +244,6 @@ const COOKIE_WORLD_PERCHED_BIRD_DIRECTION: Vec3 = Vec3::new(-0.62, 0.72, 0.30);
 const COOKIE_WORLD_FLYING_BIRD_CENTER: Vec3 = Vec3::new(-4.14, 2.34, 0.66);
 /// Height of a standing bird's center over the ground, in body radii.
 const SONGBIRD_STANDING_HEIGHT: f32 = 1.14;
-/// Bird colors: body, belly and wing/tail feathers. The first bird is cool
-/// teal, the second a warm robin with an orange breast.
-const SONGBIRD_PALETTES: [(Color, Color, Color); COOKIE_WORLD_BIRD_COUNT] = [
-    (
-        Color::new(0.16, 0.66, 0.72),
-        Color::new(0.93, 0.90, 0.74),
-        Color::new(0.07, 0.38, 0.50),
-    ),
-    (
-        Color::new(0.58, 0.34, 0.19),
-        Color::new(0.99, 0.55, 0.20),
-        Color::new(0.34, 0.18, 0.09),
-    ),
-];
-/// Wing feather tips (from the shoulder) for a folded and an open wing, in
-/// body radii for the bird's left side (+X).
-const SONGBIRD_SHOULDER: Vec3 = Vec3::new(0.90, -0.02, -0.08);
-const SONGBIRD_FOLDED_WING: [Vec3; 4] = [
-    Vec3::new(1.08, -0.12, -0.90),
-    Vec3::new(1.10, -0.34, -0.80),
-    Vec3::new(1.07, -0.46, -0.70),
-    Vec3::new(1.04, -0.55, -0.58),
-];
-/// Open wings spread out to the sides like a fan of long feathers, a little
-/// raised.
-const SONGBIRD_OPEN_WING: [Vec3; 4] = [
-    Vec3::new(1.55, 0.55, -0.15),
-    Vec3::new(1.72, 0.30, -0.30),
-    Vec3::new(1.70, 0.02, -0.44),
-    Vec3::new(1.50, -0.22, -0.54),
-];
-const SONGBIRD_TAIL: [Vec3; 3] = [
-    Vec3::new(-0.26, 0.26, -1.46),
-    Vec3::new(0.00, 0.34, -1.54),
-    Vec3::new(0.26, 0.26, -1.46),
-];
-const SONGBIRD_CREST: [Vec3; 3] = [
-    Vec3::new(-0.13, 1.36, 0.22),
-    Vec3::new(0.00, 1.44, 0.08),
-    Vec3::new(0.13, 1.36, 0.22),
-];
 /// The horns curl in a plane that faces the initial camera, so their spiral
 /// is seen from the side, and their mouths turn a little towards it.
 const COOKIE_WORLD_HORNS: [WaffleHorn; 2] = [
@@ -535,6 +496,8 @@ struct SpaceMaterials {
     slingshot_band: usize,
     tnt_crate: usize,
     pig: usize,
+    pig_ear: usize,
+    pig_detail: usize,
     snout: usize,
     eye: usize,
     pupil: usize,
@@ -562,7 +525,7 @@ struct CookieWorldMaterials {
     bird_belly: [usize; COOKIE_WORLD_BIRD_COUNT],
     bird_feather: [usize; COOKIE_WORLD_BIRD_COUNT],
     bird_beak: usize,
-    bird_feet: usize,
+    bird_accent: usize,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -1446,16 +1409,16 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
     // Character materials keep a little emission so they stay readable on the
     // shadowed side of the planet, and a soft glossy highlight.
     let pig = scene.add_material(Material::new(
-        Color::new(0.47, 0.90, 0.30),
-        0.55,
-        48.0,
+        Color::new(0.36, 0.90, 0.065),
+        0.25,
+        24.0,
         0.0,
         0.0,
         1.0,
         Color::new(0.070, 0.150, 0.040),
     ))?;
     let snout = scene.add_material(Material::new(
-        Color::new(0.74, 0.97, 0.50),
+        Color::new(0.66, 0.89, 0.045),
         0.45,
         36.0,
         0.0,
@@ -1465,8 +1428,8 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
     ))?;
     let eye = scene.add_material(Material::new(
         Color::WHITE,
-        0.60,
-        64.0,
+        0.15,
+        24.0,
         0.0,
         0.0,
         1.0,
@@ -1474,8 +1437,8 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
     ))?;
     let pupil = scene.add_material(Material::new(
         Color::new(0.02, 0.02, 0.02),
-        0.90,
-        96.0,
+        0.05,
+        16.0,
         0.0,
         0.0,
         1.0,
@@ -1493,6 +1456,24 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         )
         .with_texture(tnt_crate_texture, Vec2::new(1.0, 1.0), WrapMode::Clamp),
     )?;
+    let pig_ear = scene.add_material(Material::new(
+        Color::new(0.36, 0.90, 0.065),
+        0.25,
+        24.0,
+        0.0,
+        0.0,
+        1.0,
+        Color::new(0.050, 0.110, 0.010),
+    ))?;
+    let pig_detail = scene.add_material(Material::new(
+        Color::new(0.09, 0.27, 0.018),
+        0.10,
+        16.0,
+        0.0,
+        0.0,
+        1.0,
+        Color::BLACK,
+    ))?;
     Ok(SpaceMaterials {
         cookie_gravity_field,
         level_three_asteroid,
@@ -1509,6 +1490,8 @@ fn register_space_materials(scene: &mut Scene) -> Result<SpaceMaterials, SpaceBu
         slingshot_band,
         tnt_crate,
         pig,
+        pig_ear,
+        pig_detail,
         snout,
         eye,
         pupil,
@@ -1729,30 +1712,6 @@ const PIG_SKIN_SPOTS: [(Vec3, f32); 8] = [
     (Vec3::new(-0.62, -0.38, -0.69), 0.20),
 ];
 
-/// Snout of the level two pig: two overlapping discs make a wide oval. Both
-/// discs share the snout material and the same front plane, so the overlap
-/// shades exactly like a single face (no visible z-fighting and no seam).
-const PIG_SNOUT_CENTER: Vec3 = Vec3::new(0.0, -0.20, 0.0);
-const PIG_SNOUT_LOBE_OFFSET: f32 = 0.08;
-const PIG_SNOUT_RADIUS: f32 = 0.27;
-const PIG_SNOUT_HALF_DEPTH: f32 = 0.16;
-/// Distance from the pig center to the front face of the snout.
-const PIG_SNOUT_FRONT: f32 = 1.06;
-const PIG_NOSTRIL_OFFSET_X: f32 = 0.12;
-const PIG_NOSTRIL_RADIUS: f32 = 0.065;
-const PIG_NOSTRIL_HALF_DEPTH: f32 = 0.02;
-/// How far the nostrils stick out of the snout face.
-const PIG_NOSTRIL_LIFT: f32 = 0.008;
-const PIG_EYE_DIRECTION: Vec3 = Vec3::new(0.55, 0.05, 0.83);
-const PIG_EYE_DISTANCE: f32 = 0.87;
-const PIG_EYE_RADIUS: f32 = 0.22;
-const PIG_PUPIL_RADIUS: f32 = 0.09;
-/// Both pupils look up and towards the viewer's right.
-const PIG_GAZE_OFFSET: Vec3 = Vec3::new(0.34, 0.24, 0.0);
-const PIG_PUPIL_DISTANCE: f32 = 0.155;
-const PIG_EAR_DIRECTION: Vec3 = Vec3::new(0.40, 0.90, 0.10);
-const PIG_EAR_DISTANCE: f32 = 0.94;
-const PIG_EAR_RADIUS: f32 = 0.17;
 /// Popcorn stuck on the right side of the pig's head: offset from the anchor
 /// point (in pig radii), radius and whether it is the golden kernel.
 const PIG_POPCORN_ANCHOR: Vec3 = Vec3::new(0.78, 0.52, 0.34);
@@ -1782,69 +1741,21 @@ fn add_cookie_world_bubble_pig(
     let first_part = scene.object_count();
 
     metadata.cookie_world_pig_id = Some(scene.object_count());
-    scene.add_sphere(Sphere::new(
+    pigs::add_pig_head(
+        scene,
         COOKIE_WORLD_PIG_CENTER,
         radius,
-        world.pig_skin,
-    )?)?;
+        basis,
+        pigs::PigMaterials {
+            body: world.pig_skin,
+            ear: world.pig_ear,
+            snout: world.pig_snout,
+            detail: world.pig_nostril,
+            eye: materials.eye,
+            pupil: materials.pupil,
+        },
+    )?;
 
-    let snout_basis = facing_basis(basis)?;
-    for side in [-1.0, 1.0] {
-        scene.add_cylinder(Cylinder::new(
-            at(PIG_SNOUT_CENTER
-                + Vec3::new(
-                    side * PIG_SNOUT_LOBE_OFFSET,
-                    0.0,
-                    PIG_SNOUT_FRONT - PIG_SNOUT_HALF_DEPTH,
-                )),
-            PIG_SNOUT_RADIUS * radius,
-            PIG_SNOUT_HALF_DEPTH * radius,
-            snout_basis,
-            world.pig_snout,
-        )?)?;
-    }
-
-    let nostril_front = PIG_SNOUT_FRONT + PIG_NOSTRIL_LIFT;
-    for side in [-1.0, 1.0] {
-        scene.add_cylinder(Cylinder::new(
-            at(PIG_SNOUT_CENTER
-                + Vec3::new(
-                    side * PIG_NOSTRIL_OFFSET_X,
-                    0.0,
-                    nostril_front - PIG_NOSTRIL_HALF_DEPTH,
-                )),
-            PIG_NOSTRIL_RADIUS * radius,
-            PIG_NOSTRIL_HALF_DEPTH * radius,
-            snout_basis,
-            world.pig_nostril,
-        )?)?;
-    }
-
-    for side in [-1.0, 1.0] {
-        let eye_direction = mirrored_x(PIG_EYE_DIRECTION, side).normalized();
-        let eye_center = eye_direction * PIG_EYE_DISTANCE;
-        let gaze = (eye_direction + PIG_GAZE_OFFSET).normalized();
-
-        scene.add_sphere(Sphere::new(
-            at(eye_center),
-            PIG_EYE_RADIUS * radius,
-            materials.eye,
-        )?)?;
-        scene.add_sphere(Sphere::new(
-            at(eye_center + gaze * PIG_PUPIL_DISTANCE),
-            PIG_PUPIL_RADIUS * radius,
-            materials.pupil,
-        )?)?;
-    }
-
-    for side in [-1.0, 1.0] {
-        let ear_direction = mirrored_x(PIG_EAR_DIRECTION, side).normalized();
-        scene.add_sphere(Sphere::new(
-            at(ear_direction * PIG_EAR_DISTANCE),
-            PIG_EAR_RADIUS * radius,
-            world.pig_ear,
-        )?)?;
-    }
     metadata.cookie_world_pig_parts = scene.object_count() - first_part;
     metadata.pig_count += 1;
 
@@ -2048,13 +1959,17 @@ fn register_cookie_world_materials(
     let mut bird_body = [0; COOKIE_WORLD_BIRD_COUNT];
     let mut bird_belly = [0; COOKIE_WORLD_BIRD_COUNT];
     let mut bird_feather = [0; COOKIE_WORLD_BIRD_COUNT];
-    for (index, (body, belly, feather)) in SONGBIRD_PALETTES.into_iter().enumerate() {
+    for (index, (body, belly, feather)) in birds::BIRD_PALETTES
+        .into_iter()
+        .take(COOKIE_WORLD_BIRD_COUNT)
+        .enumerate()
+    {
         bird_body[index] = bird_material(scene, body)?;
         bird_belly[index] = bird_material(scene, belly)?;
         bird_feather[index] = bird_material(scene, feather)?;
     }
     let bird_beak = bird_material(scene, Color::new(1.0, 0.74, 0.18))?;
-    let bird_feet = bird_material(scene, Color::new(0.95, 0.55, 0.12))?;
+    let bird_accent = bird_material(scene, Color::new(1.0, 0.84, 0.10))?;
 
     Ok(CookieWorldMaterials {
         bubble,
@@ -2075,7 +1990,7 @@ fn register_cookie_world_materials(
         bird_belly,
         bird_feather,
         bird_beak,
-        bird_feet,
+        bird_accent,
     })
 }
 
@@ -2361,7 +2276,7 @@ fn add_lumpy_rocks(
     Ok(())
 }
 
-/// Original cartoon songbird. Its local frame has X to its left side, Y up
+/// Space bird pose. Its local frame has X to its left side, Y up
 /// and Z forward (where the beak points); sizes are in body radii.
 #[derive(Debug, Clone, Copy)]
 struct Songbird {
@@ -2370,9 +2285,6 @@ struct Songbird {
     forward: Vec3,
     up: Vec3,
     palette: usize,
-    flying: bool,
-    crest: bool,
-    legs: bool,
 }
 
 /// Materials of one songbird.
@@ -2382,7 +2294,8 @@ struct SongbirdMaterials {
     belly: usize,
     feather: usize,
     beak: usize,
-    feet: usize,
+    accent: usize,
+    kind: BirdKind,
     eye: usize,
     pupil: usize,
 }
@@ -2394,7 +2307,8 @@ impl CookieWorldMaterials {
             belly: self.bird_belly[palette],
             feather: self.bird_feather[palette],
             beak: self.bird_beak,
-            feet: self.bird_feet,
+            accent: self.bird_accent,
+            kind: birds::BIRD_KINDS[palette],
             eye: materials.eye,
             pupil: materials.pupil,
         }
@@ -2415,21 +2329,14 @@ fn cookie_world_birds() -> [Songbird; COOKIE_WORLD_BIRD_COUNT] {
             forward: Vec3::new(1.0, 0.0, 0.9),
             up: ground,
             palette: 0,
-            flying: false,
-            crest: true,
-            legs: true,
         },
-        // Flies from the slingshot towards the pig with open wings, turned a
-        // little towards the camera so both wings show.
+        // Flies towards the pig, turned towards the camera to show the face.
         Songbird {
             center: COOKIE_WORLD_FLYING_BIRD_CENTER,
             radius: COOKIE_WORLD_BIRD_RADIUS,
             forward: Vec3::new(0.75, -0.30, 0.65),
             up: Vec3::new(0.15, 1.0, 0.0),
             palette: 1,
-            flying: true,
-            crest: false,
-            legs: false,
         },
     ]
 }
@@ -2451,126 +2358,7 @@ fn add_cookie_world_birds(
     Ok(())
 }
 
-/// Round body with a lighter belly, big friendly eyes with a highlight, an
-/// open two-part beak, feathered wings and tail, and legs when standing.
-fn add_songbird(
-    scene: &mut Scene,
-    bird: Songbird,
-    colors: SongbirdMaterials,
-) -> Result<(), SpaceBuildError> {
-    let up = bird.up.normalized();
-    let forward = (bird.forward - up * bird.forward.dot(up)).normalized();
-    let left = up.cross(forward);
-    let basis = Basis3::new(left, up, forward)?;
-    let at = |local: Vec3| bird.center + basis.local_to_world_vector(local * bird.radius);
-    let body = colors.body;
-    let feather = colors.feather;
-
-    scene.add_sphere(Sphere::new(bird.center, bird.radius, body)?)?;
-    scene.add_sphere(Sphere::new(
-        at(Vec3::new(0.0, -0.24, 0.38)),
-        bird.radius * 0.66,
-        colors.belly,
-    )?)?;
-
-    for side in [-1.0, 1.0] {
-        let eye_direction = Vec3::new(side * 0.36, 0.30, 0.88).normalized();
-        let eye = eye_direction * 0.76;
-        let pupil = eye + (eye_direction + Vec3::new(0.0, 0.0, 0.3)).normalized() * 0.18;
-
-        scene.add_sphere(Sphere::new(at(eye), bird.radius * 0.28, colors.eye)?)?;
-        scene.add_sphere(Sphere::new(at(pupil), bird.radius * 0.13, colors.pupil)?)?;
-        scene.add_sphere(Sphere::new(
-            at(pupil + Vec3::new(side * 0.04, 0.07, 0.09)),
-            bird.radius * 0.04,
-            colors.eye,
-        )?)?;
-    }
-
-    add_feather(
-        scene,
-        at(Vec3::new(0.0, 0.02, 0.86)),
-        at(Vec3::new(0.0, -0.08, 1.55)),
-        bird.radius * 0.24,
-        colors.beak,
-    )?;
-    add_feather(
-        scene,
-        at(Vec3::new(0.0, -0.16, 0.82)),
-        at(Vec3::new(0.0, -0.28, 1.28)),
-        bird.radius * 0.16,
-        colors.beak,
-    )?;
-
-    let wing = if bird.flying {
-        SONGBIRD_OPEN_WING
-    } else {
-        SONGBIRD_FOLDED_WING
-    };
-    for side in [-1.0, 1.0] {
-        let shoulder = mirrored_x(SONGBIRD_SHOULDER, side);
-        scene.add_sphere(Sphere::new(at(shoulder), bird.radius * 0.26, feather)?)?;
-        for tip in wing {
-            add_feather(
-                scene,
-                at(shoulder),
-                at(mirrored_x(tip, side)),
-                bird.radius * 0.21,
-                feather,
-            )?;
-        }
-    }
-
-    for tip in SONGBIRD_TAIL {
-        add_feather(
-            scene,
-            at(Vec3::new(0.0, 0.0, -0.82)),
-            at(tip),
-            bird.radius * 0.14,
-            feather,
-        )?;
-    }
-
-    if bird.crest {
-        for tip in SONGBIRD_CREST {
-            add_feather(
-                scene,
-                at(Vec3::new(0.0, 0.90, 0.12)),
-                at(tip),
-                bird.radius * 0.08,
-                feather,
-            )?;
-        }
-    }
-
-    if bird.legs {
-        for side in [-1.0, 1.0] {
-            let hip = Vec3::new(side * 0.26, -0.80, 0.08);
-            let ankle = Vec3::new(side * 0.28, -1.10, 0.10);
-            let start = at(hip);
-            let end = at(ankle);
-            scene.add_cylinder(Cylinder::new(
-                (start + end) * 0.5,
-                bird.radius * 0.05,
-                (end - start).length() * 0.5,
-                basis_with_up(end - start)?,
-                colors.feet,
-            )?)?;
-            add_feather(
-                scene,
-                at(ankle + Vec3::new(0.0, -0.02, -0.06)),
-                at(ankle + Vec3::new(0.0, -0.04, 0.34)),
-                bird.radius * 0.07,
-                colors.feet,
-            )?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Cone with its round base at `base` and its tip at `tip`: feathers, beaks
-/// and toes.
+/// Cone with its round base at `base` and its tip at `tip`: feathers and beaks.
 fn add_feather(
     scene: &mut Scene,
     base: Vec3,
@@ -3753,42 +3541,20 @@ fn add_space_pig(
     basis: Basis3,
     materials: SpaceMaterials,
 ) -> Result<(), SpaceBuildError> {
-    let at = |local: Vec3| center + basis.local_to_world_vector(local);
-
-    scene.add_sphere(Sphere::new(center, radius, materials.pig)?)?;
-    scene.add_cylinder(Cylinder::new(
-        // Front cap slightly outside the body so the snout face is visible.
-        at(Vec3::new(0.0, -radius * 0.03, radius * 0.86)),
-        radius * 0.34,
-        radius * 0.18,
-        facing_basis(basis)?,
-        materials.snout,
-    )?)?;
-
-    for eye_x in [-radius * 0.34, radius * 0.34] {
-        scene.add_sphere(Sphere::new(
-            at(Vec3::new(eye_x, radius * 0.42, radius * 0.90)),
-            radius * 0.16,
-            materials.eye,
-        )?)?;
-        scene.add_sphere(Sphere::new(
-            at(Vec3::new(eye_x, radius * 0.42, radius * 1.04)),
-            radius * 0.07,
-            materials.pupil,
-        )?)?;
-    }
-
-    for ear_x in [-radius * 0.44, radius * 0.44] {
-        scene.add_cone(Cone::new(
-            at(Vec3::new(ear_x, radius * 0.88, 0.0)),
-            radius * 0.14,
-            radius * 0.18,
-            basis,
-            materials.pig,
-        )?)?;
-    }
-
-    Ok(())
+    pigs::add_pig_head(
+        scene,
+        center,
+        radius,
+        basis,
+        pigs::PigMaterials {
+            body: materials.pig,
+            ear: materials.pig_ear,
+            snout: materials.snout,
+            detail: materials.pig_detail,
+            eye: materials.eye,
+            pupil: materials.pupil,
+        },
+    )
 }
 
 /// Basis whose local Y axis points along the frame tangent Z, so cylinders and
@@ -3856,17 +3622,16 @@ mod tests {
         LEVEL_THREE_SLINGSHOT_ASTEROID_RADIUS, LEVEL_THREE_SLINGSHOT_DIRECTION, LayoutFrame,
         PIG_SKIN_BASE_COLOR, PIG_SKIN_TEXTURE_HEIGHT, PIG_SKIN_TEXTURE_WIDTH, POPCORN_PUFFS,
         PlanetType, SKYBOX_ASTEROID_A_U, SKYBOX_ASTEROID_A_V, SPACE_SUN_DIRECTION, SPACE_SUN_U,
-        SPACE_SUN_V, SceneState, Songbird, SpaceMaterials, TNT_CRATE_TEXTURE_PATH,
-        WOOD_BLOCK_TEXTURE_PATH, blue_moon_orbit_camera, blue_moon_skybox,
-        build_blue_moon_scene_with_metadata, build_cookie_world_scene_with_metadata,
-        build_galaxy_selector_scene, build_level_three_scene_with_metadata,
-        build_space_levels_scene_with_metadata, cookie_texture, cookie_world_birds,
-        cookie_world_orbit_camera, cookie_world_skybox, danger_zone_skybox_texture,
-        galaxy_selector_orbit_camera, galaxy_selector_worlds, level_three_orbit_camera,
-        level_three_secondary_asteroid_center, level_three_skybox, pig_skin_texture,
-        register_cookie_world_materials, register_space_materials, space_levels_orbit_camera,
-        space_menu_skybox, space_skybox_color, space_skybox_texture, sun_light_position,
-        utopia_skybox_texture,
+        SPACE_SUN_V, SceneState, SpaceMaterials, TNT_CRATE_TEXTURE_PATH, WOOD_BLOCK_TEXTURE_PATH,
+        blue_moon_orbit_camera, blue_moon_skybox, build_blue_moon_scene_with_metadata,
+        build_cookie_world_scene_with_metadata, build_galaxy_selector_scene,
+        build_level_three_scene_with_metadata, build_space_levels_scene_with_metadata,
+        cookie_texture, cookie_world_birds, cookie_world_orbit_camera, cookie_world_skybox,
+        danger_zone_skybox_texture, galaxy_selector_orbit_camera, galaxy_selector_worlds,
+        level_three_orbit_camera, level_three_secondary_asteroid_center, level_three_skybox,
+        pig_skin_texture, register_cookie_world_materials, register_space_materials,
+        space_levels_orbit_camera, space_menu_skybox, space_skybox_color, space_skybox_texture,
+        sun_light_position, utopia_skybox_texture,
         voxel::{self, assert_voxel_ball},
         wrapped_uv_distance,
     };
@@ -4390,8 +4155,8 @@ mod tests {
     fn cookie_world_scene_counts_match_metadata() {
         let (scene, metadata) = build_cookie_world_scene_with_metadata().unwrap();
 
-        // Body, two snout discs, two nostrils, two eyes, two pupils, two ears.
-        assert_eq!(metadata.cookie_world_pig_parts, 11);
+        // The shared pig head includes the snout, ears and facial details.
+        assert_eq!(metadata.cookie_world_pig_parts, super::pigs::PIG_PART_COUNT);
         assert_eq!(metadata.cookie_world_popcorn_parts, 5);
         assert_eq!(
             metadata.cookie_world_cookie_count,
@@ -4432,7 +4197,7 @@ mod tests {
             COOKIE_WORLD_ROCKS.len() * 2
         );
         assert_eq!(metadata.cookie_world_bird_count, COOKIE_WORLD_BIRD_COUNT);
-        assert_eq!(scene.oriented_box_count(), 0);
+        assert_eq!(scene.oriented_box_count(), COOKIE_WORLD_BIRD_COUNT * 2);
         assert_eq!(scene.cube_count(), 0);
     }
 
@@ -4444,6 +4209,14 @@ mod tests {
             (
                 cylinder.center(),
                 cylinder.radius().hypot(cylinder.half_height()),
+            )
+        } else if let Some(part) = object.as_oriented_box() {
+            (part.center(), part.half_extents().length())
+        } else if let Some(part) = object.as_crystal() {
+            let half = part.body_height() * 0.5;
+            (
+                part.base() + part.orientation().up() * half,
+                part.radius().hypot(half),
             )
         } else {
             let cone = object.as_cone().unwrap();
@@ -4609,59 +4382,57 @@ mod tests {
     }
 
     #[test]
-    fn cookie_world_has_two_original_birds_by_the_slingshot() {
+    fn cookie_world_has_two_space_birds_by_the_slingshot() {
         let (scene, _) = build_cookie_world_scene_with_metadata().unwrap();
-        let SpaceMaterials { eye, pupil, .. } =
-            register_space_materials(&mut Scene::new()).unwrap();
+        let shared = register_space_materials(&mut Scene::new()).unwrap();
         let world = cookie_world_material_ids();
         let slingshot_cookie = COOKIE_WORLD_COOKIES[COOKIE_WORLD_SLINGSHOT_COOKIE];
-        let near = |bird: Songbird, object: &Primitive, reach: f32| {
-            (bounding_sphere(object).0 - bird.center).length() < bird.radius * reach
-        };
 
-        for (index, bird) in cookie_world_birds().into_iter().enumerate() {
-            let parts_with = |material: usize, reach: f32| {
+        for bird in cookie_world_birds() {
+            let parts_with = |material| {
                 scene
                     .objects()
                     .iter()
-                    .filter(|object| object.material_id() == material && near(bird, object, reach))
+                    .filter(|object| {
+                        object.material_id() == material
+                            && (bounding_sphere(object).0 - bird.center).length()
+                                < bird.radius * 1.8
+                    })
                     .count()
             };
             let body = scene
                 .objects()
                 .iter()
-                .filter_map(|object| object.as_sphere())
-                .find(|sphere| sphere.material_id() == world.bird_body[bird.palette])
+                .find(|object| object.material_id() == world.bird_body[bird.palette])
                 .unwrap();
-
-            assert_eq!(body.center(), bird.center, "bird {index}");
-            assert_eq!(body.radius(), COOKIE_WORLD_BIRD_RADIUS);
-            // Eyes with a highlight each, pupils, a two part beak and a belly.
-            assert_eq!(parts_with(eye, 1.2), 4, "bird {index} eyes");
-            assert_eq!(parts_with(pupil, 1.2), 2, "bird {index} pupils");
-            assert_eq!(parts_with(world.bird_beak, 1.6), 2, "bird {index} beak");
-            assert_eq!(parts_with(world.bird_belly[bird.palette], 1.0), 1);
-            // Two wings of four feathers plus their shoulders and a tail.
-            assert!(parts_with(world.bird_feather[bird.palette], 2.2) >= 2 * 5 + 3);
-            assert!(
-                (bird.center - slingshot_cookie.center).length() < 3.0,
-                "bird {index} is far from the slingshot"
-            );
+            if bird.palette == 0 {
+                let sphere = body.as_sphere().unwrap();
+                assert_eq!(sphere.center(), bird.center);
+                assert_eq!(sphere.radius(), COOKIE_WORLD_BIRD_RADIUS);
+            } else {
+                assert_eq!(body.as_crystal().unwrap().sides(), 3);
+            }
+            assert_eq!(parts_with(shared.eye), 2);
+            // Two mask rims, two pupils, two brows, two straps and three tail feathers.
+            assert_eq!(parts_with(shared.pupil), 11);
+            assert_eq!(parts_with(world.bird_beak), 2);
+            assert_eq!(parts_with(world.bird_belly[bird.palette]), 1);
+            assert_eq!(parts_with(world.bird_feather[bird.palette]), 2);
+            assert!((bird.center - slingshot_cookie.center).length() < 3.0);
             assert!((COOKIE_WORLD_PIG_CENTER - bird.center).dot(bird.forward) > 0.0);
         }
-
-        // The standing bird's feet touch the cookie.
-        let feet_depth = scene
-            .objects()
-            .iter()
-            .filter(|object| object.material_id() == world.bird_feet)
-            .map(|object| {
-                let (center, radius) = bounding_sphere(object);
-                (center - slingshot_cookie.center).length() - radius - slingshot_cookie.radius
-            })
-            .fold(f32::INFINITY, f32::min);
-        assert!(feet_depth < 0.0);
-        assert!(feet_depth > -0.15);
+        // The compact birds have no separately colored feet or extended wings.
+        assert!(
+            !scene
+                .objects()
+                .iter()
+                .any(|part| part.material_id() == world.bird_accent)
+        );
+        let waiting = cookie_world_birds()[0];
+        let gap = (waiting.center - slingshot_cookie.center).length()
+            - waiting.radius
+            - slingshot_cookie.radius;
+        assert!((gap - waiting.radius * (super::SONGBIRD_STANDING_HEIGHT - 1.0)).abs() < 1.0e-5);
     }
 
     #[test]
@@ -4918,7 +4689,8 @@ mod tests {
         let snout_parts: Vec<_> = scene
             .cylinders()
             .filter(|cylinder| {
-                cylinder.material_id() == pig_snout || cylinder.material_id() == pig_nostril
+                (cylinder.material_id() == pig_snout || cylinder.material_id() == pig_nostril)
+                    && cylinder.orientation().up().dot(towards_camera) > 0.95
             })
             .collect();
 
@@ -5078,7 +4850,7 @@ mod tests {
                 + metadata.level_three_tower_parts
                 + metadata.level_three_lower_structure_parts
                 + metadata.level_three_rock_parts
-                + metadata.level_three_pig_count * 8
+                + metadata.level_three_pig_count * super::pigs::PIG_PART_COUNT
                 + slingshot_asteroid.total()
                 + metadata.level_three_slingshot_parts
                 + metadata.level_three_bird_parts
@@ -5105,6 +4877,12 @@ mod tests {
             (cone.center(), cone.base_radius().hypot(cone.half_height()))
         } else if let Some(part) = object.as_oriented_box() {
             (part.center(), part.half_extents().length())
+        } else if let Some(part) = object.as_crystal() {
+            let half = part.body_height() * 0.5;
+            (
+                part.base() + part.orientation().up() * half,
+                part.radius().hypot(half),
+            )
         } else {
             let tetrahedron = object.as_curved_tetrahedron().unwrap();
             (tetrahedron.center(), tetrahedron.circumradius())
@@ -5328,20 +5106,34 @@ mod tests {
         let first_bird =
             asteroid.first_id + asteroid.total() + metadata.level_three_slingshot_parts;
         let birds = &scene.objects()[first_bird..first_bird + metadata.level_three_bird_parts];
-        // Each bird starts with its round body.
+        // Find character bodies by their registered appearance, independent
+        // of primitive kind and of the additional facial details.
+        let mut registry = Scene::new();
+        let shared = register_space_materials(&mut registry).unwrap();
+        let appearances = super::birds::register_bird_materials(&mut registry, shared).unwrap();
+        let body_colors: Vec<_> = appearances
+            .iter()
+            .map(|bird| registry.material(bird.body).unwrap().albedo)
+            .collect();
         let bodies: Vec<_> = birds
             .iter()
-            .filter_map(Primitive::as_sphere)
-            .filter(|sphere| sphere.radius() > 0.12)
+            .filter(|part| {
+                body_colors.contains(&scene.material(part.material_id()).unwrap().albedo)
+            })
             .collect();
-
         assert_eq!(metadata.level_three_bird_count, 3);
         assert_eq!(bodies.len(), 3);
-        // The loaded bird sits over the slingshot, the others next to the
-        // asteroid, all of them close to it.
-        assert!(bodies[0].center().y > LEVEL_THREE_SLINGSHOT_ASTEROID_CENTER.y + 0.5);
-        for body in &bodies {
-            let distance = (body.center() - LEVEL_THREE_SLINGSHOT_ASTEROID_CENTER).length();
+        assert_eq!(
+            bodies
+                .iter()
+                .filter(|part| part.as_crystal().is_some())
+                .count(),
+            1
+        );
+        assert!(bounding_sphere(bodies[0]).0.y > LEVEL_THREE_SLINGSHOT_ASTEROID_CENTER.y + 0.5);
+        for body in bodies {
+            let distance =
+                (bounding_sphere(body).0 - LEVEL_THREE_SLINGSHOT_ASTEROID_CENTER).length();
             assert!(distance > LEVEL_THREE_SLINGSHOT_ASTEROID_RADIUS);
             assert!(distance < LEVEL_THREE_SLINGSHOT_ASTEROID_RADIUS + 1.2);
         }

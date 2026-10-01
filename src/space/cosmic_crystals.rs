@@ -1685,10 +1685,13 @@ mod tests {
         assert!(scene.curved_tetrahedron_count() == 0);
         assert_eq!(metadata.pig_count, LEVEL_FOUR_PIG_COUNT);
         assert_eq!(pig_bodies, LEVEL_FOUR_PIG_COUNT);
-        // Body, snout, two eyes with pupils and two ears per pig.
-        assert_eq!(metadata.pig_parts, LEVEL_FOUR_PIG_COUNT * 8);
+        // Every pig uses the shared rounded head and facial details.
+        assert_eq!(
+            metadata.pig_parts,
+            LEVEL_FOUR_PIG_COUNT * super::super::pigs::PIG_PART_COUNT
+        );
         assert_eq!(metadata.bird_count, 3);
-        assert!(metadata.bird_parts >= 3 * 20);
+        assert_eq!(metadata.bird_parts, 2 * 19 + 18);
         assert!(metadata.crystal_count >= 60);
         assert!(metadata.embedded_gem_count >= 40);
         assert_eq!(metadata.cut_gem_count, 3);
@@ -1696,10 +1699,14 @@ mod tests {
         assert!(metadata.slingshot_parts > 0);
         assert!(metadata.wood_parts >= 20);
         assert!(metadata.rope_parts >= 8);
-        // The floating contraption's triangular stone plate is a crystal too.
+        // The stone plate and Lazer's body/belly also use triangular prisms.
         assert_eq!(
             scene.crystal_count(),
-            metadata.crystal_count + metadata.embedded_gem_count + metadata.cut_gem_count + 1
+            metadata.crystal_count
+                + metadata.embedded_gem_count
+                + metadata.cut_gem_count
+                + 1
+                + super::super::birds::LAZER_PRISM_PARTS
         );
     }
 
