@@ -1,7 +1,9 @@
 use raylib::prelude::*;
 use std::time::{Duration, Instant};
 
+mod completion;
 mod intro;
+use completion::CompletionAction;
 use intro::{IntroAction, IntroMenu};
 
 use crate::{
@@ -249,6 +251,51 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             ReferenceAction::None => {}
         }
 
+        let completion_was_open = level_one
+            .as_ref()
+            .is_some_and(|level| level.game().outcome() == Outcome::Won);
+        let completion_action = completion::action(
+            level_one.as_ref().map(|level| level.game().outcome()),
+            reference_was_open || show_reference,
+            rl.is_key_pressed(KeyboardKey::KEY_ENTER)
+                || rl.is_key_pressed(KeyboardKey::KEY_KP_ENTER),
+            rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT)
+                .then(|| rl.get_mouse_position()),
+            (rl.get_screen_width(), rl.get_screen_height()),
+        );
+        match completion_action {
+            Some(CompletionAction::Selector) => {
+                return_to_selector(
+                    aspect_ratio,
+                    &mut scene_state,
+                    &mut scene,
+                    &mut orbit_camera,
+                    &mut camera,
+                    &mut render_state,
+                )?;
+                level_one = None;
+                mouse_state = MouseInteractionState::default();
+                suppress_selector_click_until_release = true;
+            }
+            Some(CompletionAction::Retry) => {
+                if let Some(level) = level_one.as_mut() {
+                    level.game_mut().restart();
+                }
+            }
+            Some(CompletionAction::NextWorld) => {
+                level_one = select_planet(
+                    PlanetType::CookieWorld,
+                    aspect_ratio,
+                    &mut scene_state,
+                    &mut scene,
+                    &mut orbit_camera,
+                    &mut camera,
+                    &mut render_state,
+                )?;
+            }
+            None => {}
+        }
+
         let viewport = render_viewport(
             rl.get_screen_width(),
             rl.get_screen_height(),
@@ -259,14 +306,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             .as_mut()
             .filter(|_| !reference_was_open && !show_reference)
         {
-            update_level_one(
-                &rl,
-                level,
-                &camera,
-                viewport,
-                (framebuffer.width(), framebuffer.height()),
-                delta_seconds,
-            );
+            if !completion_was_open {
+                update_level_one(
+                    &rl,
+                    level,
+                    &camera,
+                    viewport,
+                    (framebuffer.width(), framebuffer.height()),
+                    delta_seconds,
+                );
+            }
             if level.sync_scene(&mut scene)? {
                 render_state.mark_scene_changed_interactive(now);
             } else if level.game().is_aiming() {
@@ -281,14 +330,19 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let aiming = level_one
             .as_ref()
             .is_some_and(|level| level.game().is_aiming());
+        let completion_blocks_camera = completion_was_open
+            || level_one
+                .as_ref()
+                .is_some_and(|level| level.game().outcome() == Outcome::Won);
 
-        let mouse_orbit_delta = if aiming {
+        let mouse_orbit_delta = if aiming || completion_blocks_camera {
             (0.0, 0.0)
         } else {
             mouse_orbit_delta(&rl, scene_state)
         };
         if !reference_was_open
             && !show_reference
+            && !completion_blocks_camera
             && orbit_camera.update(read_camera_input(&rl, mouse_orbit_delta), delta_seconds)
         {
             camera = orbit_camera.to_camera();
@@ -1820,7 +1874,7 @@ fn controls_lines() -> [&'static str; 6] {
     ]
 }
 
-/// Score, birds left, the aiming dots and the end of level banner.
+/// Score, birds left, aiming dots and the result overlay.
 fn draw_game_hud(
     drawing: &mut RaylibDrawHandle<'_>,
     game: &Game,
@@ -1894,12 +1948,20 @@ fn draw_game_hud(
                 Color::new(230, 242, 255, 240),
             );
         }
-        Outcome::Won | Outcome::Lost => {
-            let (title, color) = if game.outcome() == Outcome::Won {
-                ("NIVEL COMPLETADO", Color::new(164, 231, 35, 255))
-            } else {
-                ("NIVEL FALLIDO", Color::new(255, 120, 90, 255))
-            };
+        Outcome::Won => {
+            let mouse = drawing.get_mouse_position();
+            let font = drawing.get_font_default();
+            completion::draw(
+                drawing,
+                (screen_width, screen_height),
+                game.score(),
+                level_one_stars(game.score()),
+                mouse,
+                &font,
+            );
+        }
+        Outcome::Lost => {
+            let (title, color) = ("NIVEL FALLIDO", Color::new(255, 120, 90, 255));
             let detail = format!("Puntos: {}   /   Enter: jugar de nuevo", game.score());
             let title_size = (72.0 * scale).round() as i32;
             let detail_size = (26.0 * scale).round() as i32;
