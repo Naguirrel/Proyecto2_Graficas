@@ -33,6 +33,38 @@ const STATUS_FONT_SIZE: i32 = 20;
 const CONTROLS_FONT_SIZE: i32 = 20;
 const SCORE_FONT_SIZE: i32 = 44;
 const TRAJECTORY_DOT_RADIUS: f32 = 3.5;
+const MUSIC_PATHS: [&str; 5] = [
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Music/ABS_PG2_Main_Theme.mp3"
+    ),
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Music/ABS_PG2_Level_1.mp3"
+    ),
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Music/ABS_PG2_Level_2.mp3"
+    ),
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Music/ABS_PG2_Level_3.mp3"
+    ),
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Music/ABS_PG2_Level_4.mp3"
+    ),
+];
+
+fn music_index(scene_state: SceneState) -> usize {
+    match scene_state {
+        SceneState::Galaxy => 0,
+        SceneState::Planet(PlanetType::BlueMoon) => 1,
+        SceneState::Planet(PlanetType::CookieWorld) => 2,
+        SceneState::Planet(PlanetType::AsteroidBelt) => 3,
+        SceneState::Planet(PlanetType::CosmicCrystals) => 4,
+    }
+}
 
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (mut rl, thread) = raylib::init()
@@ -42,6 +74,20 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     enter_fullscreen(&mut rl);
     rl.set_exit_key(None);
     rl.set_target_fps(60);
+
+    let audio = RaylibAudio::init_audio_device()?;
+    let mut music = [
+        audio.new_music(MUSIC_PATHS[0])?,
+        audio.new_music(MUSIC_PATHS[1])?,
+        audio.new_music(MUSIC_PATHS[2])?,
+        audio.new_music(MUSIC_PATHS[3])?,
+        audio.new_music(MUSIC_PATHS[4])?,
+    ];
+    for track in &mut music {
+        track.set_looping(true);
+    }
+    let mut active_music_index = music_index(SceneState::Galaxy);
+    music[active_music_index].play_stream();
 
     let (render_width, render_height) = visible_framebuffer_dimensions(&rl);
     let mut framebuffer = Framebuffer::new(render_width, render_height);
@@ -197,6 +243,14 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &mut render_state,
             )?;
         }
+
+        let next_music_index = music_index(scene_state);
+        if next_music_index != active_music_index {
+            music[active_music_index].stop_stream();
+            music[next_music_index].play_stream();
+            active_music_index = next_music_index;
+        }
+        music[active_music_index].update_stream();
 
         if let Some(quality) = render_state.next_render(now, FULL_QUALITY_DELAY) {
             let started = Instant::now();
@@ -1711,14 +1765,15 @@ fn project_world_to_pixel(
 mod tests {
     use super::{
         FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, LEVEL_NAME_FONT_SIZE,
-        RenderQuality, Viewport, approximate_text_width, build_planet_level, build_planet_scene,
-        controls_lines, interactive_dimensions, level_one_stars, level_ui_metadata,
-        mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel, mouse_to_level_plane,
-        orbit_drag_button, performance_scene_label, pick_selector_world, planet_orbit_camera,
-        project_world_to_pixel, project_world_to_screen, ray_level_plane_point,
-        render_dimensions_for, render_viewport, return_to_selector, scene_state_label,
-        selector_arrow_buttons, selector_arrow_under_mouse, selector_level_ui_metadata,
-        selector_planet_under_mouse, sign_lines, step_focus, write_framebuffer_rgba,
+        MUSIC_PATHS, RenderQuality, Viewport, approximate_text_width, build_planet_level,
+        build_planet_scene, controls_lines, interactive_dimensions, level_one_stars,
+        level_ui_metadata, mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel,
+        mouse_to_level_plane, music_index, orbit_drag_button, performance_scene_label,
+        pick_selector_world, planet_orbit_camera, project_world_to_pixel, project_world_to_screen,
+        ray_level_plane_point, render_dimensions_for, render_viewport, return_to_selector,
+        scene_state_label, selector_arrow_buttons, selector_arrow_under_mouse,
+        selector_level_ui_metadata, selector_planet_under_mouse, sign_lines, step_focus,
+        write_framebuffer_rgba,
     };
     use crate::{
         camera::{Camera, CameraInput, OrbitCamera},
@@ -1764,6 +1819,22 @@ mod tests {
             4.0 / 3.0,
             Vec3::new(0.0, 1.0, 0.0),
         )
+    }
+
+    #[test]
+    fn each_scene_uses_its_own_existing_music_file() {
+        let states = [
+            SceneState::Galaxy,
+            SceneState::Planet(PlanetType::BlueMoon),
+            SceneState::Planet(PlanetType::CookieWorld),
+            SceneState::Planet(PlanetType::AsteroidBelt),
+            SceneState::Planet(PlanetType::CosmicCrystals),
+        ];
+        for (expected_index, scene_state) in states.into_iter().enumerate() {
+            let index = music_index(scene_state);
+            assert_eq!(index, expected_index);
+            assert!(std::path::Path::new(MUSIC_PATHS[index]).is_file());
+        }
     }
 
     #[test]
