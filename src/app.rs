@@ -2054,7 +2054,7 @@ mod tests {
     }
 
     #[test]
-    fn each_level_has_a_matching_reference_image() {
+    fn each_level_has_a_matching_reference_image() -> Result<(), Box<dyn std::error::Error>> {
         for (expected, planet) in [
             PlanetType::BlueMoon,
             PlanetType::CookieWorld,
@@ -2067,7 +2067,10 @@ mod tests {
             let index = reference_index(planet);
             assert_eq!(index, expected);
             assert!(std::path::Path::new(REFERENCE_PATHS[index]).is_file());
+            let image = raylib::prelude::Image::load_image(REFERENCE_PATHS[index])?;
+            assert!(image.width() > 0 && image.height() > 0);
         }
+        Ok(())
     }
 
     #[test]
