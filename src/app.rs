@@ -55,6 +55,24 @@ const MUSIC_PATHS: [&str; 5] = [
         "/assets/Music/ABS_PG2_Level_4.mp3"
     ),
 ];
+const REFERENCE_PATHS: [&str; 4] = [
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Levels_images/level_1.jpeg"
+    ),
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Levels_images/level_2.jpeg"
+    ),
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Levels_images/level_3.jpeg"
+    ),
+    concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/assets/Levels_images/level_4.jpeg"
+    ),
+];
 
 fn music_index(scene_state: SceneState) -> usize {
     match scene_state {
@@ -63,6 +81,48 @@ fn music_index(scene_state: SceneState) -> usize {
         SceneState::Planet(PlanetType::CookieWorld) => 2,
         SceneState::Planet(PlanetType::AsteroidBelt) => 3,
         SceneState::Planet(PlanetType::CosmicCrystals) => 4,
+    }
+}
+
+fn reference_index(planet: PlanetType) -> usize {
+    match planet {
+        PlanetType::BlueMoon => 0,
+        PlanetType::CookieWorld => 1,
+        PlanetType::AsteroidBelt => 2,
+        PlanetType::CosmicCrystals => 3,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReferenceAction {
+    None,
+    Open,
+    Close,
+    ReturnToSelector,
+}
+
+fn reference_action(
+    scene_state: SceneState,
+    is_open: bool,
+    pressed_m: bool,
+    pressed_backspace: bool,
+    clicked_close: bool,
+) -> ReferenceAction {
+    if scene_state == SceneState::Galaxy {
+        return ReferenceAction::None;
+    }
+    if is_open {
+        if pressed_backspace || clicked_close {
+            ReferenceAction::Close
+        } else {
+            ReferenceAction::None
+        }
+    } else if pressed_m {
+        ReferenceAction::Open
+    } else if pressed_backspace {
+        ReferenceAction::ReturnToSelector
+    } else {
+        ReferenceAction::None
     }
 }
 
@@ -110,6 +170,13 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         Image::gen_image_color(render_width as i32, render_height as i32, Color::BLACK);
     let mut render_texture = rl.load_texture_from_image(&thread, &render_image)?;
     render_texture.set_texture_filter(&thread, TextureFilter::TEXTURE_FILTER_POINT);
+    let references = [
+        rl.load_texture(&thread, REFERENCE_PATHS[0])?,
+        rl.load_texture(&thread, REFERENCE_PATHS[1])?,
+        rl.load_texture(&thread, REFERENCE_PATHS[2])?,
+        rl.load_texture(&thread, REFERENCE_PATHS[3])?,
+    ];
+    let mut show_reference = false;
 
     print_controls();
     print_rayon_threads();
@@ -123,16 +190,32 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         let delta_seconds = now.duration_since(last_frame).as_secs_f32();
         last_frame = now;
 
-        if scene_state != SceneState::Galaxy && rl.is_key_pressed(KeyboardKey::KEY_BACKSPACE) {
-            return_to_selector(
-                aspect_ratio,
-                &mut scene_state,
-                &mut scene,
-                &mut orbit_camera,
-                &mut camera,
-                &mut render_state,
-            )?;
-            level_one = None;
+        let reference_was_open = show_reference;
+        let close_button = reference_close_button(rl.get_screen_width(), rl.get_screen_height());
+        let clicked_close = show_reference
+            && rl.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT)
+            && point_in_rectangle(rl.get_mouse_position(), close_button);
+        match reference_action(
+            scene_state,
+            show_reference,
+            rl.is_key_pressed(KeyboardKey::KEY_M),
+            rl.is_key_pressed(KeyboardKey::KEY_BACKSPACE),
+            clicked_close,
+        ) {
+            ReferenceAction::Open => show_reference = true,
+            ReferenceAction::Close => show_reference = false,
+            ReferenceAction::ReturnToSelector => {
+                return_to_selector(
+                    aspect_ratio,
+                    &mut scene_state,
+                    &mut scene,
+                    &mut orbit_camera,
+                    &mut camera,
+                    &mut render_state,
+                )?;
+                level_one = None;
+            }
+            ReferenceAction::None => {}
         }
 
         let viewport = render_viewport(
@@ -141,7 +224,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
             framebuffer.width(),
             framebuffer.height(),
         );
-        if let Some(level) = level_one.as_mut() {
+        if let Some(level) = level_one
+            .as_mut()
+            .filter(|_| !reference_was_open && !show_reference)
+        {
             update_level_one(
                 &rl,
                 level,
@@ -170,7 +256,10 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             mouse_orbit_delta(&rl, scene_state)
         };
-        if orbit_camera.update(read_camera_input(&rl, mouse_orbit_delta), delta_seconds) {
+        if !reference_was_open
+            && !show_reference
+            && orbit_camera.update(read_camera_input(&rl, mouse_orbit_delta), delta_seconds)
+        {
             camera = orbit_camera.to_camera();
             render_state.mark_camera_changed(now);
         }
@@ -320,6 +409,11 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 viewport,
                 (framebuffer.width(), framebuffer.height()),
             );
+        }
+        if let SceneState::Planet(planet) = scene_state
+            && show_reference
+        {
+            draw_reference_overlay(&mut drawing, &references[reference_index(planet)], planet);
         }
     }
 
@@ -1030,6 +1124,125 @@ fn draw_framebuffer_texture(
 }
 
 #[derive(Debug, Clone, Copy)]
+struct ReferenceLayout {
+    panel: Rectangle,
+    image: Rectangle,
+    close_button: Rectangle,
+}
+
+fn reference_panel(screen_width: i32, screen_height: i32) -> Rectangle {
+    let width = screen_width.max(1) as f32;
+    let height = screen_height.max(1) as f32;
+    let panel_width = width * 0.88;
+    let panel_height = height * 0.88;
+    Rectangle::new(
+        (width - panel_width) * 0.5,
+        (height - panel_height) * 0.5,
+        panel_width,
+        panel_height,
+    )
+}
+
+fn reference_close_button(screen_width: i32, screen_height: i32) -> Rectangle {
+    let panel = reference_panel(screen_width, screen_height);
+    let scale = menu_scale(screen_height);
+    let width = 100.0 * scale;
+    let height = 38.0 * scale;
+    Rectangle::new(
+        panel.x + panel.width - width - 16.0 * scale,
+        panel.y + 14.0 * scale,
+        width,
+        height,
+    )
+}
+
+fn reference_layout(
+    screen_width: i32,
+    screen_height: i32,
+    image_width: i32,
+    image_height: i32,
+) -> ReferenceLayout {
+    let panel = reference_panel(screen_width, screen_height);
+    let scale = menu_scale(screen_height);
+    let padding = 22.0 * scale;
+    let image_top = panel.y + 68.0 * scale;
+    let available_width = (panel.width - 2.0 * padding).max(1.0);
+    let available_height = (panel.y + panel.height - image_top - 42.0 * scale).max(1.0);
+    let fit = (available_width / image_width.max(1) as f32)
+        .min(available_height / image_height.max(1) as f32);
+    let width = image_width.max(1) as f32 * fit;
+    let height = image_height.max(1) as f32 * fit;
+    ReferenceLayout {
+        panel,
+        image: Rectangle::new(
+            panel.x + (panel.width - width) * 0.5,
+            image_top + (available_height - height) * 0.5,
+            width,
+            height,
+        ),
+        close_button: reference_close_button(screen_width, screen_height),
+    }
+}
+
+fn point_in_rectangle(point: Vector2, rectangle: Rectangle) -> bool {
+    point.x >= rectangle.x
+        && point.y >= rectangle.y
+        && point.x < rectangle.x + rectangle.width
+        && point.y < rectangle.y + rectangle.height
+}
+
+fn draw_reference_overlay(
+    drawing: &mut RaylibDrawHandle<'_>,
+    texture: &Texture2D,
+    planet: PlanetType,
+) {
+    let screen_width = drawing.get_screen_width();
+    let screen_height = drawing.get_screen_height();
+    let layout = reference_layout(
+        screen_width,
+        screen_height,
+        texture.width(),
+        texture.height(),
+    );
+    let scale = menu_scale(screen_height);
+    drawing.draw_rectangle(0, 0, screen_width, screen_height, Color::new(0, 0, 0, 210));
+    drawing.draw_rectangle_rec(layout.panel, Color::new(17, 30, 52, 255));
+    drawing.draw_rectangle_lines_ex(layout.panel, 2.0, Color::new(124, 184, 255, 255));
+    drawing.draw_text(
+        &format!("Referencia: {}", planet_label(planet)),
+        (layout.panel.x + 20.0 * scale).round() as i32,
+        (layout.panel.y + 20.0 * scale).round() as i32,
+        (27.0 * scale).round() as i32,
+        Color::WHITE,
+    );
+    drawing.draw_rectangle_rec(layout.close_button, Color::new(110, 172, 43, 255));
+    draw_text_centered(
+        drawing,
+        "Cerrar",
+        (layout.close_button.x + layout.close_button.width * 0.5).round() as i32,
+        (layout.close_button.y + 8.0 * scale).round() as i32,
+        (22.0 * scale).round() as i32,
+        Color::WHITE,
+    );
+    drawing.draw_texture_pro(
+        texture,
+        Rectangle::new(0.0, 0.0, texture.width() as f32, texture.height() as f32),
+        layout.image,
+        Vector2::new(0.0, 0.0),
+        0.0,
+        Color::WHITE,
+    );
+    draw_text_centered(
+        drawing,
+        "Backspace: cerrar referencia",
+        screen_width / 2,
+        (layout.panel.y + layout.panel.height - 31.0 * scale).round() as i32,
+        (18.0 * scale).round() as i32,
+        Color::new(200, 220, 245, 255),
+    );
+}
+
+#[derive(Debug, Clone, Copy)]
 struct UiOverlayState {
     scene_state: SceneState,
     hover_planet: Option<PlanetType>,
@@ -1562,11 +1775,12 @@ fn draw_controls_overlay(drawing: &mut RaylibDrawHandle<'_>, panel_width: i32) {
     }
 }
 
-fn controls_lines() -> [&'static str; 5] {
+fn controls_lines() -> [&'static str; 6] {
     [
         "Click izq: seleccionar / rotar nivel",
         "Click der + mover: rotar menu",
         "Rueda: zoom",
+        "M: ver referencia del nivel",
         "Backspace: regresar",
         "Esc: salir",
     ]
@@ -1765,12 +1979,14 @@ fn project_world_to_pixel(
 mod tests {
     use super::{
         FULL_QUALITY_DELAY, INTERACTIVE_SCALE, InteractiveRenderState, LEVEL_NAME_FONT_SIZE,
-        MUSIC_PATHS, RenderQuality, Viewport, approximate_text_width, build_planet_level,
-        build_planet_scene, controls_lines, interactive_dimensions, level_one_stars,
-        level_ui_metadata, mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel,
-        mouse_to_level_plane, music_index, orbit_drag_button, performance_scene_label,
-        pick_selector_world, planet_orbit_camera, project_world_to_pixel, project_world_to_screen,
-        ray_level_plane_point, render_dimensions_for, render_viewport, return_to_selector,
+        MUSIC_PATHS, REFERENCE_PATHS, ReferenceAction, RenderQuality, Viewport,
+        approximate_text_width, build_planet_level, build_planet_scene, controls_lines,
+        interactive_dimensions, level_one_stars, level_ui_metadata,
+        mouse_position_to_framebuffer_pixel, mouse_to_framebuffer_pixel, mouse_to_level_plane,
+        music_index, orbit_drag_button, performance_scene_label, pick_selector_world,
+        planet_orbit_camera, point_in_rectangle, project_world_to_pixel, project_world_to_screen,
+        ray_level_plane_point, reference_action, reference_close_button, reference_index,
+        reference_layout, render_dimensions_for, render_viewport, return_to_selector,
         scene_state_label, selector_arrow_buttons, selector_arrow_under_mouse,
         selector_level_ui_metadata, selector_planet_under_mouse, sign_lines, step_focus,
         write_framebuffer_rgba,
@@ -1835,6 +2051,66 @@ mod tests {
             assert_eq!(index, expected_index);
             assert!(std::path::Path::new(MUSIC_PATHS[index]).is_file());
         }
+    }
+
+    #[test]
+    fn each_level_has_a_matching_reference_image() {
+        for (expected, planet) in [
+            PlanetType::BlueMoon,
+            PlanetType::CookieWorld,
+            PlanetType::AsteroidBelt,
+            PlanetType::CosmicCrystals,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let index = reference_index(planet);
+            assert_eq!(index, expected);
+            assert!(std::path::Path::new(REFERENCE_PATHS[index]).is_file());
+        }
+    }
+
+    #[test]
+    fn reference_backspace_closes_before_returning_to_selector() {
+        let level = SceneState::Planet(PlanetType::BlueMoon);
+        assert_eq!(
+            reference_action(level, false, true, false, false),
+            ReferenceAction::Open
+        );
+        assert_eq!(
+            reference_action(level, true, false, true, false),
+            ReferenceAction::Close
+        );
+        assert_eq!(
+            reference_action(level, false, false, true, false),
+            ReferenceAction::ReturnToSelector
+        );
+        assert_eq!(
+            reference_action(level, true, false, false, true),
+            ReferenceAction::Close
+        );
+        assert_eq!(
+            reference_action(SceneState::Galaxy, false, true, false, false),
+            ReferenceAction::None
+        );
+    }
+
+    #[test]
+    fn reference_image_fits_panel_and_close_button_is_clickable() {
+        let layout = reference_layout(800, 600, 1600, 900);
+        assert!(layout.image.x >= layout.panel.x);
+        assert!(layout.image.y >= layout.panel.y);
+        assert!(layout.image.x + layout.image.width <= layout.panel.x + layout.panel.width);
+        assert!(layout.image.y + layout.image.height <= layout.panel.y + layout.panel.height);
+        assert_eq!(layout.close_button, reference_close_button(800, 600));
+        assert!(point_in_rectangle(
+            Vector2::new(layout.close_button.x + 1.0, layout.close_button.y + 1.0),
+            layout.close_button,
+        ));
+        assert!(!point_in_rectangle(
+            Vector2::new(0.0, 0.0),
+            layout.close_button
+        ));
     }
 
     #[test]
@@ -2260,6 +2536,7 @@ mod tests {
                 "Click izq: seleccionar / rotar nivel",
                 "Click der + mover: rotar menu",
                 "Rueda: zoom",
+                "M: ver referencia del nivel",
                 "Backspace: regresar",
                 "Esc: salir",
             ]
