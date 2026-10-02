@@ -447,9 +447,7 @@ pub(crate) fn is_light_visible(scene: &Scene, hit: &Intersection, light: &PointL
         return true;
     }
 
-    scene
-        .intersect(&shadow_ray, SHADOW_EPSILON, shadow_t_max)
-        .is_none()
+    !scene.intersects_any(&shadow_ray, SHADOW_EPSILON, shadow_t_max)
 }
 
 pub(crate) fn background_color(direction: Vec3) -> Color {
@@ -2909,6 +2907,15 @@ mod tests {
     #[test]
     fn parallel_render_matches_sequential_with_mixed_geometry() {
         let scene = mixed_cube_sphere_scene();
+        let camera = front_camera(1.0);
+
+        assert_parallel_matches_sequential(&scene, &camera, 19, 13);
+    }
+
+    #[test]
+    fn parallel_render_matches_sequential_with_bvh() {
+        let mut scene = mixed_cube_sphere_scene();
+        scene.build_bvh();
         let camera = front_camera(1.0);
 
         assert_parallel_matches_sequential(&scene, &camera, 19, 13);

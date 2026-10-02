@@ -1,12 +1,16 @@
 pub mod app;
 pub mod basis;
+mod bvh;
 pub mod camera;
 pub mod cinema;
 pub mod color;
 pub mod cone;
+pub mod crystal;
 pub mod cube;
+pub mod curved_tetrahedron;
 pub mod cylinder;
 pub mod framebuffer;
+pub mod game;
 pub mod intersection;
 pub mod light;
 pub mod material;

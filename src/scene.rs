@@ -1,5 +1,6 @@
 use crate::{
-    color::Color, cone::Cone, cube::Cube, cylinder::Cylinder, intersection::Intersection,
+    bvh::Bvh, color::Color, cone::Cone, crystal::Crystal, cube::Cube,
+    curved_tetrahedron::CurvedTetrahedron, cylinder::Cylinder, intersection::Intersection,
     light::PointLight, material::Material, oriented_box::OrientedBox, primitive::Primitive,
     ray::Ray, skybox::Skybox, sphere::Sphere, texture::Texture,
 };
@@ -13,6 +14,13 @@ pub enum SceneError {
 #[derive(Debug)]
 pub struct Scene {
     objects: Vec<Primitive>,
+    /// BVH over the static objects (every object while no dynamic range
+    /// exists).
+    bvh: Option<Bvh>,
+    /// Objects from this index on are dynamic: a game can replace them
+    /// between frames without rebuilding the static BVH.
+    dynamic_start: Option<usize>,
+    dynamic_bvh: Option<Bvh>,
     materials: Vec<Material>,
     textures: Vec<Texture>,
     lights: Vec<PointLight>,
@@ -63,6 +71,17 @@ impl Scene {
         self.add_primitive(cone.into())
     }
 
+    pub fn add_curved_tetrahedron(
+        &mut self,
+        tetrahedron: CurvedTetrahedron,
+    ) -> Result<(), SceneError> {
+        self.add_primitive(tetrahedron.into())
+    }
+
+    pub fn add_crystal(&mut self, crystal: Crystal) -> Result<(), SceneError> {
+        self.add_primitive(crystal.into())
+    }
+
     pub fn add_primitive(&mut self, primitive: Primitive) -> Result<(), SceneError> {
         let material_id = primitive.material_id();
 
@@ -71,7 +90,55 @@ impl Scene {
         }
 
         self.objects.push(primitive);
+        if self.dynamic_start.is_some() {
+            self.dynamic_bvh = None;
+        } else {
+            self.bvh = None;
+        }
         Ok(())
+    }
+
+    /// Builds the static acceleration structure after scene construction.
+    /// With dynamic objects, the static and dynamic ranges get one BVH each.
+    pub fn build_bvh(&mut self) {
+        let (static_objects, dynamic_objects) = self.objects.split_at(self.static_object_count());
+        self.bvh = Some(Bvh::build(static_objects));
+        if self.dynamic_start.is_some() {
+            self.dynamic_bvh = Some(Bvh::build(dynamic_objects));
+        }
+    }
+
+    /// Builds the static BVH and makes every object added from now on
+    /// dynamic. Dynamic objects are cleared and added again when they move,
+    /// and only their small BVH is rebuilt.
+    pub fn freeze_static_objects(&mut self) {
+        self.dynamic_start = None;
+        self.dynamic_bvh = None;
+        self.bvh = Some(Bvh::build(&self.objects));
+        self.dynamic_start = Some(self.objects.len());
+    }
+
+    /// Removes the dynamic objects, keeping the static ones and their BVH.
+    pub fn clear_dynamic_objects(&mut self) {
+        if let Some(start) = self.dynamic_start {
+            self.objects.truncate(start);
+            self.dynamic_bvh = None;
+        }
+    }
+
+    /// Builds the BVH of the dynamic objects after they were added again.
+    pub fn build_dynamic_bvh(&mut self) {
+        if self.dynamic_start.is_some() {
+            self.dynamic_bvh = Some(Bvh::build(self.dynamic_objects()));
+        }
+    }
+
+    pub fn static_object_count(&self) -> usize {
+        self.dynamic_start.unwrap_or(self.objects.len())
+    }
+
+    pub fn dynamic_objects(&self) -> &[Primitive] {
+        &self.objects[self.static_object_count()..]
     }
 
     pub fn add_light(&mut self, light: PointLight) {
@@ -118,6 +185,18 @@ impl Scene {
         self.objects.iter().filter_map(Primitive::as_cone)
     }
 
+    /// Iterates over curved-tetrahedron primitives only, without allocating.
+    pub fn curved_tetrahedra(&self) -> impl Iterator<Item = &CurvedTetrahedron> {
+        self.objects
+            .iter()
+            .filter_map(Primitive::as_curved_tetrahedron)
+    }
+
+    /// Iterates over crystal primitives only, without allocating.
+    pub fn crystals(&self) -> impl Iterator<Item = &Crystal> {
+        self.objects.iter().filter_map(Primitive::as_crystal)
+    }
+
     pub fn object_count(&self) -> usize {
         self.objects.len()
     }
@@ -157,6 +236,14 @@ impl Scene {
             .count()
     }
 
+    pub fn curved_tetrahedron_count(&self) -> usize {
+        self.curved_tetrahedra().count()
+    }
+
+    pub fn crystal_count(&self) -> usize {
+        self.crystals().count()
+    }
+
     pub fn materials(&self) -> &[Material] {
         &self.materials
     }
@@ -178,24 +265,83 @@ impl Scene {
     }
 
     pub fn intersect(&self, ray: &Ray, t_min: f32, t_max: f32) -> Option<Intersection> {
-        let mut closest = t_max;
-        let mut closest_hit = None;
+        let (static_objects, dynamic_objects) = self.objects.split_at(self.static_object_count());
+        let static_hit = intersect_objects(static_objects, self.bvh.as_ref(), ray, t_min, t_max);
 
-        for primitive in &self.objects {
-            if let Some(hit) = primitive.intersect(ray, t_min, closest) {
-                closest = hit.distance;
-                closest_hit = Some(hit);
-            }
+        if dynamic_objects.is_empty() {
+            return static_hit;
         }
 
-        closest_hit
+        let closest = static_hit.map_or(t_max, |hit| hit.distance);
+        intersect_objects(
+            dynamic_objects,
+            self.dynamic_bvh.as_ref(),
+            ray,
+            t_min,
+            closest,
+        )
+        .or(static_hit)
     }
+
+    pub fn intersects_any(&self, ray: &Ray, t_min: f32, t_max: f32) -> bool {
+        let (static_objects, dynamic_objects) = self.objects.split_at(self.static_object_count());
+
+        intersects_any_object(static_objects, self.bvh.as_ref(), ray, t_min, t_max)
+            || intersects_any_object(
+                dynamic_objects,
+                self.dynamic_bvh.as_ref(),
+                ray,
+                t_min,
+                t_max,
+            )
+    }
+}
+
+fn intersect_objects(
+    objects: &[Primitive],
+    bvh: Option<&Bvh>,
+    ray: &Ray,
+    t_min: f32,
+    t_max: f32,
+) -> Option<Intersection> {
+    if let Some(bvh) = bvh {
+        return bvh.intersect(objects, ray, t_min, t_max);
+    }
+    let mut closest = t_max;
+    let mut closest_hit = None;
+
+    for primitive in objects {
+        if let Some(hit) = primitive.intersect(ray, t_min, closest) {
+            closest = hit.distance;
+            closest_hit = Some(hit);
+        }
+    }
+
+    closest_hit
+}
+
+fn intersects_any_object(
+    objects: &[Primitive],
+    bvh: Option<&Bvh>,
+    ray: &Ray,
+    t_min: f32,
+    t_max: f32,
+) -> bool {
+    if let Some(bvh) = bvh {
+        return bvh.intersects_any(objects, ray, t_min, t_max);
+    }
+    objects
+        .iter()
+        .any(|primitive| primitive.intersect(ray, t_min, t_max).is_some())
 }
 
 impl Default for Scene {
     fn default() -> Self {
         Self {
             objects: Vec::new(),
+            bvh: None,
+            dynamic_start: None,
+            dynamic_bvh: None,
             materials: Vec::new(),
             textures: Vec::new(),
             lights: Vec::new(),
@@ -212,7 +358,9 @@ mod tests {
         basis::Basis3,
         color::Color,
         cone::Cone,
+        crystal::{Crystal, CrystalShape},
         cube::Cube,
+        curved_tetrahedron::CurvedTetrahedron,
         cylinder::Cylinder,
         light::PointLight,
         material::Material,
@@ -263,6 +411,48 @@ mod tests {
 
     fn unit_cone(material_id: usize) -> Cone {
         Cone::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), material_id).unwrap()
+    }
+
+    fn unit_curved_tetrahedron(material_id: usize) -> CurvedTetrahedron {
+        CurvedTetrahedron::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), material_id).unwrap()
+    }
+
+    fn unit_crystal(material_id: usize) -> Crystal {
+        Crystal::new(
+            Vec3::new(0.0, -1.0, 0.0),
+            CrystalShape {
+                radius: 1.0,
+                body_height: 1.2,
+                tip_height: 0.8,
+                tip_cut: 0.0,
+                base_tip_height: 0.0,
+                sides: 6,
+            },
+            Basis3::identity(),
+            material_id,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn crystals_are_added_counted_and_hit_through_the_bvh() {
+        let mut scene = diffuse_scene();
+        scene.add_crystal(unit_crystal(0)).unwrap();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.7, 5.0), Vec3::new(0.0, 0.0, -1.0));
+        let linear = scene.intersect(&ray, 0.001, 100.0);
+
+        scene.build_bvh();
+
+        assert_eq!(scene.crystal_count(), 1);
+        assert_eq!(scene.crystals().count(), 1);
+        assert_eq!(scene.sphere_count(), 1);
+        assert!(linear.is_some());
+        assert_eq!(scene.intersect(&ray, 0.001, 100.0), linear);
+        assert_eq!(
+            scene.add_crystal(unit_crystal(9)),
+            Err(SceneError::MissingMaterial { material_id: 9 })
+        );
     }
 
     #[test]
@@ -648,12 +838,174 @@ mod tests {
     }
 
     #[test]
+    fn add_curved_tetrahedron_stores_and_counts_it() {
+        let mut scene = diffuse_scene();
+        let tetrahedron = unit_curved_tetrahedron(0);
+
+        assert_eq!(scene.add_curved_tetrahedron(tetrahedron), Ok(()));
+        assert_eq!(scene.object_count(), 1);
+        assert_eq!(scene.curved_tetrahedron_count(), 1);
+        assert_eq!(scene.cone_count(), 0);
+        assert_eq!(
+            scene.objects()[0].as_curved_tetrahedron(),
+            Some(&tetrahedron)
+        );
+        assert_eq!(
+            scene.add_curved_tetrahedron(unit_curved_tetrahedron(9)),
+            Err(SceneError::MissingMaterial { material_id: 9 })
+        );
+    }
+
+    #[test]
+    fn scene_intersection_finds_curved_tetrahedron() {
+        let mut scene = diffuse_scene();
+        scene
+            .add_curved_tetrahedron(unit_curved_tetrahedron(0))
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
     fn scene_intersection_finds_cone() {
         let mut scene = diffuse_scene();
         scene.add_cone(unit_cone(0)).unwrap();
         let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
 
         assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn intersects_any_matches_linear_intersection_for_primitive_types() {
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        for primitive in [
+            Primitive::from(unit_cube(0)),
+            Primitive::from(unit_sphere(0)),
+            Primitive::from(unit_oriented_box(0)),
+            Primitive::from(unit_cylinder(0)),
+            Primitive::from(unit_cone(0)),
+            Primitive::from(unit_curved_tetrahedron(0)),
+            Primitive::from(unit_crystal(0)),
+        ] {
+            let mut scene = diffuse_scene();
+            scene.add_primitive(primitive).unwrap();
+
+            assert_eq!(
+                scene.intersects_any(&ray, 0.001, 100.0),
+                scene.intersect(&ray, 0.001, 100.0).is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn bvh_matches_linear_hits_and_shadows_for_mixed_geometry() {
+        let mut scene = diffuse_scene();
+        for offset in -3..=3 {
+            let x = offset as f32 * 2.4;
+            scene
+                .add_cube(Cube::new(
+                    Vec3::new(x - 0.4, -0.4, -0.4),
+                    Vec3::new(x + 0.4, 0.4, 0.4),
+                    0,
+                ))
+                .unwrap();
+            scene
+                .add_sphere(Sphere::new(Vec3::new(x, 1.4, 0.0), 0.45, 0).unwrap())
+                .unwrap();
+        }
+        scene.add_oriented_box(unit_oriented_box(0)).unwrap();
+        scene.add_cylinder(unit_cylinder(0)).unwrap();
+        scene.add_cone(unit_cone(0)).unwrap();
+        scene
+            .add_curved_tetrahedron(unit_curved_tetrahedron(0))
+            .unwrap();
+        scene.add_crystal(unit_crystal(0)).unwrap();
+
+        let rays: Vec<_> = (-40..=40)
+            .flat_map(|x| {
+                (-12..=12).map(move |y| {
+                    Ray::new(
+                        Vec3::new(x as f32 * 0.25, y as f32 * 0.25, 8.0),
+                        Vec3::new(0.03, 0.02, -1.0),
+                    )
+                })
+            })
+            .collect();
+        let expected: Vec<_> = rays
+            .iter()
+            .map(|ray| {
+                (
+                    scene.intersect(ray, 0.001, 100.0),
+                    scene.intersects_any(ray, 0.001, 100.0),
+                )
+            })
+            .collect();
+
+        scene.build_bvh();
+        for (ray, (hit, any)) in rays.iter().zip(expected) {
+            assert_eq!(scene.intersect(ray, 0.001, 100.0), hit);
+            assert_eq!(scene.intersects_any(ray, 0.001, 100.0), any);
+        }
+    }
+
+    #[test]
+    fn adding_object_invalidates_bvh() {
+        let mut scene = diffuse_scene();
+        scene.build_bvh();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn bvh_matches_linear_search_in_spatial_levels() {
+        for (build, orbit) in [
+            (
+                crate::space::build_blue_moon_scene as fn() -> _,
+                crate::space::blue_moon_orbit_camera as fn(f32) -> _,
+            ),
+            (
+                crate::space::build_cookie_world_scene,
+                crate::space::cookie_world_orbit_camera,
+            ),
+            (
+                crate::space::build_level_three_scene,
+                crate::space::level_three_orbit_camera,
+            ),
+        ] {
+            let scene = build().unwrap();
+            let camera = orbit(16.0 / 9.0).to_camera();
+            for y in 0..18 {
+                for x in 0..32 {
+                    let ray = camera.ray_for_pixel(x, y, 32, 18);
+                    let mut closest = 1_000.0;
+                    let mut expected = None;
+                    for object in scene.objects() {
+                        if let Some(hit) = object.intersect(&ray, 0.001, closest) {
+                            closest = hit.distance;
+                            expected = Some(hit);
+                        }
+                    }
+                    assert_eq!(scene.intersect(&ray, 0.001, 1_000.0), expected);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn intersects_any_returns_false_when_ray_misses_everything() {
+        let mut scene = diffuse_scene();
+        scene.add_cube(unit_cube(0)).unwrap();
+        scene.add_sphere(unit_sphere(0)).unwrap();
+        scene.add_oriented_box(unit_oriented_box(0)).unwrap();
+        scene.add_cylinder(unit_cylinder(0)).unwrap();
+        scene.add_cone(unit_cone(0)).unwrap();
+        let ray = Ray::new(Vec3::new(4.0, 4.0, 4.0), Vec3::new(1.0, 0.0, 0.0));
+
+        assert!(!scene.intersects_any(&ray, 0.001, 100.0));
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_none());
     }
 
     #[test]
@@ -946,5 +1298,72 @@ mod tests {
         assert_eq!(scene.cylinder_count(), 1);
         assert_eq!(scene.cone_count(), 1);
         assert_eq!(scene.object_count(), objects_before);
+    }
+
+    #[test]
+    fn dynamic_objects_are_hit_in_front_of_static_objects() {
+        let mut scene = diffuse_scene();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -4.0), 1.0, 0).unwrap())
+            .unwrap();
+        scene.freeze_static_objects();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -1.0), 0.5, 0).unwrap())
+            .unwrap();
+        scene.build_dynamic_bvh();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert_eq!(scene.static_object_count(), 1);
+        assert_eq!(scene.dynamic_objects().len(), 1);
+        assert!((hit.distance - 3.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn static_objects_in_front_of_dynamic_ones_still_win() {
+        let mut scene = diffuse_scene();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -1.0), 0.5, 0).unwrap())
+            .unwrap();
+        scene.freeze_static_objects();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(0.0, 0.0, -4.0), 1.0, 0).unwrap())
+            .unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        let hit = scene.intersect(&ray, 0.001, 100.0).unwrap();
+
+        assert!((hit.distance - 3.5).abs() < 0.0001);
+    }
+
+    #[test]
+    fn clearing_dynamic_objects_keeps_static_objects() {
+        let mut scene = diffuse_scene();
+        scene.add_cube(unit_cube(0)).unwrap();
+        scene.freeze_static_objects();
+        scene
+            .add_sphere(Sphere::new(Vec3::new(4.0, 0.0, 0.0), 1.0, 0).unwrap())
+            .unwrap();
+        scene.build_dynamic_bvh();
+        let dynamic_ray = Ray::new(Vec3::new(4.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        assert!(scene.intersects_any(&dynamic_ray, 0.001, 100.0));
+
+        scene.clear_dynamic_objects();
+
+        assert_eq!(scene.object_count(), 1);
+        assert!(scene.dynamic_objects().is_empty());
+        assert!(!scene.intersects_any(&dynamic_ray, 0.001, 100.0));
+        let static_ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+        assert!(scene.intersect(&static_ray, 0.001, 100.0).is_some());
+    }
+
+    #[test]
+    fn dynamic_objects_cast_shadows_without_their_bvh() {
+        let mut scene = diffuse_scene();
+        scene.freeze_static_objects();
+        scene.add_cube(unit_cube(0)).unwrap();
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert!(scene.intersects_any(&ray, 0.001, 100.0));
+        assert!(scene.intersect(&ray, 0.001, 100.0).is_some());
     }
 }

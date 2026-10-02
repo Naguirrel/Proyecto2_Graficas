@@ -1,6 +1,7 @@
 use crate::{
-    cone::Cone, cube::Cube, cylinder::Cylinder, intersection::Intersection,
-    oriented_box::OrientedBox, ray::Ray, sphere::Sphere,
+    cone::Cone, crystal::Crystal, cube::Cube, curved_tetrahedron::CurvedTetrahedron,
+    cylinder::Cylinder, intersection::Intersection, oriented_box::OrientedBox, ray::Ray,
+    sphere::Sphere,
 };
 
 #[derive(Debug, PartialEq)]
@@ -10,6 +11,8 @@ pub enum Primitive {
     OrientedBox(OrientedBox),
     Cylinder(Cylinder),
     Cone(Cone),
+    CurvedTetrahedron(CurvedTetrahedron),
+    Crystal(Crystal),
 }
 
 impl Primitive {
@@ -20,6 +23,8 @@ impl Primitive {
             Self::OrientedBox(oriented_box) => oriented_box.intersect(ray, t_min, t_max),
             Self::Cylinder(cylinder) => cylinder.intersect(ray, t_min, t_max),
             Self::Cone(cone) => cone.intersect(ray, t_min, t_max),
+            Self::CurvedTetrahedron(tetrahedron) => tetrahedron.intersect(ray, t_min, t_max),
+            Self::Crystal(crystal) => crystal.intersect(ray, t_min, t_max),
         }
     }
 
@@ -30,41 +35,92 @@ impl Primitive {
             Self::OrientedBox(oriented_box) => oriented_box.material_id(),
             Self::Cylinder(cylinder) => cylinder.material_id(),
             Self::Cone(cone) => cone.material_id(),
+            Self::CurvedTetrahedron(tetrahedron) => tetrahedron.material_id(),
+            Self::Crystal(crystal) => crystal.material_id(),
         }
     }
 
     pub fn as_cube(&self) -> Option<&Cube> {
         match self {
             Self::Cube(cube) => Some(cube),
-            Self::Sphere(_) | Self::OrientedBox(_) | Self::Cylinder(_) | Self::Cone(_) => None,
+            Self::Sphere(_)
+            | Self::OrientedBox(_)
+            | Self::Cylinder(_)
+            | Self::Cone(_)
+            | Self::CurvedTetrahedron(_)
+            | Self::Crystal(_) => None,
         }
     }
 
     pub fn as_sphere(&self) -> Option<&Sphere> {
         match self {
-            Self::Cube(_) | Self::OrientedBox(_) | Self::Cylinder(_) | Self::Cone(_) => None,
+            Self::Cube(_)
+            | Self::OrientedBox(_)
+            | Self::Cylinder(_)
+            | Self::Cone(_)
+            | Self::CurvedTetrahedron(_)
+            | Self::Crystal(_) => None,
             Self::Sphere(sphere) => Some(sphere),
         }
     }
 
     pub fn as_oriented_box(&self) -> Option<&OrientedBox> {
         match self {
-            Self::Cube(_) | Self::Sphere(_) | Self::Cylinder(_) | Self::Cone(_) => None,
+            Self::Cube(_)
+            | Self::Sphere(_)
+            | Self::Cylinder(_)
+            | Self::Cone(_)
+            | Self::CurvedTetrahedron(_)
+            | Self::Crystal(_) => None,
             Self::OrientedBox(oriented_box) => Some(oriented_box),
         }
     }
 
     pub fn as_cylinder(&self) -> Option<&Cylinder> {
         match self {
-            Self::Cube(_) | Self::Sphere(_) | Self::OrientedBox(_) | Self::Cone(_) => None,
+            Self::Cube(_)
+            | Self::Sphere(_)
+            | Self::OrientedBox(_)
+            | Self::Cone(_)
+            | Self::CurvedTetrahedron(_)
+            | Self::Crystal(_) => None,
             Self::Cylinder(cylinder) => Some(cylinder),
         }
     }
 
     pub fn as_cone(&self) -> Option<&Cone> {
         match self {
-            Self::Cube(_) | Self::Sphere(_) | Self::OrientedBox(_) | Self::Cylinder(_) => None,
+            Self::Cube(_)
+            | Self::Sphere(_)
+            | Self::OrientedBox(_)
+            | Self::Cylinder(_)
+            | Self::CurvedTetrahedron(_)
+            | Self::Crystal(_) => None,
             Self::Cone(cone) => Some(cone),
+        }
+    }
+
+    pub fn as_curved_tetrahedron(&self) -> Option<&CurvedTetrahedron> {
+        match self {
+            Self::CurvedTetrahedron(tetrahedron) => Some(tetrahedron),
+            Self::Cube(_)
+            | Self::Sphere(_)
+            | Self::OrientedBox(_)
+            | Self::Cylinder(_)
+            | Self::Cone(_)
+            | Self::Crystal(_) => None,
+        }
+    }
+
+    pub fn as_crystal(&self) -> Option<&Crystal> {
+        match self {
+            Self::Crystal(crystal) => Some(crystal),
+            Self::Cube(_)
+            | Self::Sphere(_)
+            | Self::OrientedBox(_)
+            | Self::Cylinder(_)
+            | Self::Cone(_)
+            | Self::CurvedTetrahedron(_) => None,
         }
     }
 }
@@ -99,12 +155,32 @@ impl From<Cone> for Primitive {
     }
 }
 
+impl From<CurvedTetrahedron> for Primitive {
+    fn from(tetrahedron: CurvedTetrahedron) -> Self {
+        Self::CurvedTetrahedron(tetrahedron)
+    }
+}
+
+impl From<Crystal> for Primitive {
+    fn from(crystal: Crystal) -> Self {
+        Self::Crystal(crystal)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Primitive;
     use crate::{
-        basis::Basis3, cone::Cone, cube::Cube, cylinder::Cylinder, math::Vec3,
-        oriented_box::OrientedBox, ray::Ray, sphere::Sphere,
+        basis::Basis3,
+        cone::Cone,
+        crystal::{Crystal, CrystalShape},
+        cube::Cube,
+        curved_tetrahedron::CurvedTetrahedron,
+        cylinder::Cylinder,
+        math::Vec3,
+        oriented_box::OrientedBox,
+        ray::Ray,
+        sphere::Sphere,
     };
 
     fn unit_cube() -> Cube {
@@ -125,6 +201,124 @@ mod tests {
 
     fn unit_cone() -> Cone {
         Cone::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), 6).unwrap()
+    }
+
+    fn unit_curved_tetrahedron() -> CurvedTetrahedron {
+        CurvedTetrahedron::new(Vec3::ZERO, 1.0, 1.0, Basis3::identity(), 7).unwrap()
+    }
+
+    fn unit_crystal() -> Crystal {
+        Crystal::new(
+            Vec3::ZERO,
+            CrystalShape {
+                radius: 1.0,
+                body_height: 1.0,
+                tip_height: 0.5,
+                tip_cut: 0.0,
+                base_tip_height: 0.0,
+                sides: 6,
+            },
+            Basis3::identity(),
+            8,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn crystal_variant_is_only_returned_as_crystal() {
+        let crystal = unit_crystal();
+        let primitive = Primitive::from(crystal);
+
+        assert_eq!(primitive, Primitive::Crystal(crystal));
+        assert_eq!(primitive.as_crystal(), Some(&crystal));
+        assert!(primitive.as_cube().is_none());
+        assert!(primitive.as_sphere().is_none());
+        assert!(primitive.as_oriented_box().is_none());
+        assert!(primitive.as_cylinder().is_none());
+        assert!(primitive.as_cone().is_none());
+        assert!(primitive.as_curved_tetrahedron().is_none());
+        assert!(Primitive::from(unit_sphere()).as_crystal().is_none());
+        assert!(
+            Primitive::from(unit_curved_tetrahedron())
+                .as_crystal()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn crystal_intersection_and_material_are_delegated() {
+        let crystal = unit_crystal();
+        let primitive = Primitive::from(crystal);
+        let ray = Ray::new(Vec3::new(0.0, 0.5, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert_eq!(primitive.material_id(), 8);
+        assert!(primitive.intersect(&ray, 0.001, 100.0).is_some());
+        assert_eq!(
+            primitive.intersect(&ray, 0.001, 100.0),
+            crystal.intersect(&ray, 0.001, 100.0)
+        );
+    }
+
+    #[test]
+    fn from_curved_tetrahedron_creates_curved_tetrahedron_variant() {
+        let tetrahedron = unit_curved_tetrahedron();
+        let primitive = Primitive::from(tetrahedron);
+
+        assert_eq!(primitive, Primitive::CurvedTetrahedron(tetrahedron));
+    }
+
+    #[test]
+    fn as_curved_tetrahedron_only_returns_curved_tetrahedron() {
+        let tetrahedron = unit_curved_tetrahedron();
+        let tetrahedron_primitive = Primitive::from(tetrahedron);
+
+        assert_eq!(
+            tetrahedron_primitive.as_curved_tetrahedron(),
+            Some(&tetrahedron)
+        );
+        assert!(tetrahedron_primitive.as_cube().is_none());
+        assert!(tetrahedron_primitive.as_sphere().is_none());
+        assert!(tetrahedron_primitive.as_oriented_box().is_none());
+        assert!(tetrahedron_primitive.as_cylinder().is_none());
+        assert!(tetrahedron_primitive.as_cone().is_none());
+        assert!(
+            Primitive::from(unit_cube())
+                .as_curved_tetrahedron()
+                .is_none()
+        );
+        assert!(
+            Primitive::from(unit_sphere())
+                .as_curved_tetrahedron()
+                .is_none()
+        );
+        assert!(
+            Primitive::from(unit_oriented_box())
+                .as_curved_tetrahedron()
+                .is_none()
+        );
+        assert!(
+            Primitive::from(unit_cylinder())
+                .as_curved_tetrahedron()
+                .is_none()
+        );
+        assert!(
+            Primitive::from(unit_cone())
+                .as_curved_tetrahedron()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn curved_tetrahedron_intersection_and_material_are_delegated() {
+        let tetrahedron = unit_curved_tetrahedron();
+        let primitive = Primitive::from(tetrahedron);
+        let ray = Ray::new(Vec3::new(0.0, 0.0, 3.0), Vec3::new(0.0, 0.0, -1.0));
+
+        assert_eq!(primitive.material_id(), 7);
+        assert_eq!(
+            primitive.intersect(&ray, 0.001, 100.0),
+            tetrahedron.intersect(&ray, 0.001, 100.0)
+        );
     }
 
     #[test]

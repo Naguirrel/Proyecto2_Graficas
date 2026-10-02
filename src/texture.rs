@@ -102,6 +102,43 @@ impl Texture {
         self.pixel(x, y).unwrap_or(FALLBACK_TEXTURE_COLOR)
     }
 
+    pub fn sample_bilinear(&self, uv: Vec2, wrap_mode: WrapMode) -> Color {
+        if self.width == 0
+            || self.height == 0
+            || self.pixels.is_empty()
+            || !uv.u.is_finite()
+            || !uv.v.is_finite()
+        {
+            return FALLBACK_TEXTURE_COLOR;
+        }
+
+        if self.width == 1 || self.height == 1 {
+            return self.sample(uv, wrap_mode);
+        }
+
+        let u = wrap_coordinate(uv.u, wrap_mode);
+        let v = wrap_coordinate(uv.v, wrap_mode);
+        let x = u * (self.width - 1) as f32;
+        let y = (1.0 - v) * (self.height - 1) as f32;
+        let x0 = x.floor() as usize;
+        let y0 = y.floor() as usize;
+        let x1 = (x0 + 1).min(self.width - 1);
+        let y1 = (y0 + 1).min(self.height - 1);
+        let tx = x - x0 as f32;
+        let ty = y - y0 as f32;
+
+        let top = self
+            .pixel(x0, y0)
+            .unwrap_or(FALLBACK_TEXTURE_COLOR)
+            .lerp(self.pixel(x1, y0).unwrap_or(FALLBACK_TEXTURE_COLOR), tx);
+        let bottom = self
+            .pixel(x0, y1)
+            .unwrap_or(FALLBACK_TEXTURE_COLOR)
+            .lerp(self.pixel(x1, y1).unwrap_or(FALLBACK_TEXTURE_COLOR), tx);
+
+        top.lerp(bottom, ty)
+    }
+
     fn parse_p3(text: &str) -> Result<Self, TextureError> {
         let mut tokens = PpmTokens::new(text);
         let magic = tokens.next_required("magic")?;
@@ -413,6 +450,16 @@ mod tests {
         assert_eq!(
             texture.sample(Vec2::new(1.0, 0.0), WrapMode::Clamp),
             Color::new(1.0, 1.0, 1.0)
+        );
+    }
+
+    #[test]
+    fn bilinear_sampling_blends_neighboring_pixels() {
+        let texture = corner_texture();
+
+        assert_color_near(
+            texture.sample_bilinear(Vec2::new(0.5, 0.5), WrapMode::Clamp),
+            Color::new(0.5, 0.5, 0.5),
         );
     }
 
