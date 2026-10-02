@@ -6,6 +6,9 @@ Todo el raytracing (intersecciones, iluminacion, sombras, reflexion, refraccion 
 
 El proyecto empezo como un diorama de una sala de cine. Esa escena se conserva en `src/cinema.rs` y la usan las pruebas del renderer, pero la aplicacion ya no la muestra.
 
+## Link del video
+Link para ir al video (es no listado): https://youtu.be/u31JUM8tFs4
+
 ## Mundos
 
 | Nivel | Mundo | Contenido |
